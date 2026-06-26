@@ -28,6 +28,12 @@ use serde_json::{json, Value};
 
 /// Hard ceiling on a single agent round-trip (local model or cloud).
 const ASK_TIMEOUT: Duration = Duration::from_secs(180);
+/// Hard cap on any single captured stream (subprocess stdout/stderr or an HTTP
+/// response/error body). A runaway or malicious runtime can emit an unbounded
+/// stream; we read at most this many bytes and let the rest be truncated, so a
+/// single ask can never exhaust memory before the timeout fires. 2 MiB is far
+/// more than any real answer or error needs.
+const MAX_CAPTURE: u64 = 2 * 1024 * 1024;
 const OPENROUTER_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
 /// Overridable via `HYPERION_OPENROUTER_MODEL`; OpenRouter is the fallback path,
 /// so a wrong slug surfaces a clear HTTP error telling the user to set the env.
@@ -191,6 +197,14 @@ fn run_capture(mut cmd: Command, input: Vec<u8>, timeout: Duration) -> Result<Ca
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    // Put the child in its own process group so that on timeout we can reap the
+    // whole tree (wrapper shells, model grandchildren) by signalling the group —
+    // the POSIX analogue of the Windows `taskkill /T` path in `kill_tree`.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("failed to launch runtime: {e}"))?;
@@ -244,8 +258,12 @@ fn run_capture(mut cmd: Command, input: Vec<u8>, timeout: Duration) -> Result<Ca
 fn spawn_reader<R: Read + Send + 'static>(r: Option<R>) -> std::thread::JoinHandle<Vec<u8>> {
     std::thread::spawn(move || {
         let mut buf = Vec::new();
-        if let Some(mut r) = r {
-            let _ = r.read_to_end(&mut buf);
+        if let Some(r) = r {
+            // Cap the capture: once MAX_CAPTURE bytes are read the reader stops, so
+            // a flood of output is truncated rather than buffered without bound. If
+            // the child keeps writing it will block on its full pipe and be reaped
+            // by the timeout path, never by unbounded growth here.
+            let _ = r.take(MAX_CAPTURE).read_to_end(&mut buf);
         }
         buf
     })
@@ -264,8 +282,22 @@ fn kill_tree(child: &mut std::process::Child) {
             .stderr(Stdio::null())
             .status();
     }
-    // Always also signal our direct handle (the only child on non-Windows, and a
-    // belt-and-suspenders reap on Windows if taskkill missed it).
+    // On Unix the child is its own process-group leader (set via `process_group(0)`
+    // at spawn), so a negative PID signals the whole group — reaping any wrapper or
+    // model grandchildren a CLI shim exec'd, matching the Windows `/T` behavior.
+    #[cfg(unix)]
+    {
+        let _ = Command::new("kill")
+            .arg("-KILL")
+            .arg(format!("-{}", child.id()))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    // Always also signal our direct handle (belt-and-suspenders reap on Windows if
+    // taskkill missed it, and the group leader itself on Unix if the group signal
+    // raced).
     let _ = child.kill();
 }
 
@@ -279,6 +311,61 @@ fn tail_chars(s: &str, n: usize) -> String {
     } else {
         t.chars().skip(count - n).collect()
     }
+}
+
+/// Mask secret-like tokens in untrusted stderr / HTTP-error text before it is
+/// embedded in an error string returned to the UI. External runtimes can echo
+/// authorization headers, prompts, or API keys in their diagnostics; over-
+/// redaction in an error tail is harmless, leaking a credential is not. Whitespace
+/// layout is preserved so the surrounding message stays readable.
+fn redact_secrets(s: &str) -> String {
+    s.split_inclusive(char::is_whitespace)
+        .map(|piece| {
+            let token = piece.trim_end();
+            if looks_secret(token) {
+                let trailing = &piece[token.len()..];
+                format!("[redacted]{trailing}")
+            } else {
+                piece.to_string()
+            }
+        })
+        .collect()
+}
+
+/// Heuristic: does this whitespace-delimited token look like a credential?
+/// Matches well-known key prefixes (OpenAI/OpenRouter/Anthropic/GitHub/Slack…)
+/// and long opaque tokens that mix letters and digits with no path separators.
+fn looks_secret(token: &str) -> bool {
+    // Strip surrounding quotes/punctuation so `"sk-…",` still matches.
+    let t = token.trim_matches(|c: char| {
+        matches!(
+            c,
+            '"' | '\'' | ',' | ';' | ':' | '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>'
+        )
+    });
+    if t.len() < 12 {
+        return false;
+    }
+    let lower = t.to_ascii_lowercase();
+    const PREFIXES: [&str; 7] = [
+        "sk-",
+        "sk-or-",
+        "sk-ant-",
+        "bearer",
+        "ghp_",
+        "github_pat_",
+        "xoxb-",
+    ];
+    if PREFIXES.iter().any(|p| lower.starts_with(p)) {
+        return true;
+    }
+    // Long opaque token: only base64url/hex chars (no path separators), mixing
+    // letters and digits — real words and file paths fail one of these tests.
+    t.len() >= 24
+        && t.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        && t.chars().any(|c| c.is_ascii_digit())
+        && t.chars().any(|c| c.is_ascii_alphabetic())
 }
 
 /// Compose the single prompt handed to a local CLI on stdin. The user's turn is
@@ -302,7 +389,7 @@ fn finalize(out: Captured, who: &str) -> Result<String, String> {
     let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
     if out.status.success() {
         if text.is_empty() {
-            let tail = tail_chars(&String::from_utf8_lossy(&out.stderr), 400);
+            let tail = tail_chars(&redact_secrets(&String::from_utf8_lossy(&out.stderr)), 400);
             if tail.is_empty() {
                 Err(format!("{who} returned no output"))
             } else {
@@ -312,7 +399,7 @@ fn finalize(out: Captured, who: &str) -> Result<String, String> {
             Ok(text)
         }
     } else {
-        let tail = tail_chars(&String::from_utf8_lossy(&out.stderr), 400);
+        let tail = tail_chars(&redact_secrets(&String::from_utf8_lossy(&out.stderr)), 400);
         Err(format!("{who} exited with {}: {tail}", out.status))
     }
 }
@@ -390,24 +477,31 @@ fn ask_openrouter(system: &str, question: &str, key: &str, model: &str) -> Resul
         .send_string(&body);
     match resp {
         Ok(r) => {
-            let text = r
-                .into_string()
-                .map_err(|e| format!("OpenRouter: failed to read response: {e}"))?;
+            let text = read_body_capped(r);
             let v: Value = serde_json::from_str(&text)
                 .map_err(|e| format!("OpenRouter: malformed JSON response: {e}"))?;
             extract_openrouter_content(&v)
                 .ok_or_else(|| "OpenRouter: response contained no message content".to_string())
         }
-        // Surface the API's own error text (never the key) so the user can act.
+        // Surface the API's own error text (redacted, never the key) so the user can act.
         Err(ureq::Error::Status(code, r)) => {
-            let detail = r.into_string().unwrap_or_default();
+            let detail = read_body_capped(r);
             Err(format!(
                 "OpenRouter HTTP {code}: {}",
-                tail_chars(&detail, 400)
+                tail_chars(&redact_secrets(&detail), 400)
             ))
         }
         Err(e) => Err(format!("OpenRouter request failed: {e}")),
     }
+}
+
+/// Read an HTTP body under the same hard cap as subprocess capture, so a large or
+/// malicious response cannot exhaust memory. Truncates at `MAX_CAPTURE` bytes; a
+/// truncated JSON body then fails the downstream parse with a deterministic error.
+fn read_body_capped(r: ureq::Response) -> String {
+    let mut buf = Vec::new();
+    let _ = r.into_reader().take(MAX_CAPTURE).read_to_end(&mut buf);
+    String::from_utf8_lossy(&buf).into_owned()
 }
 
 /// Pull `choices[0].message.content` (a non-empty string) from a chat response.
@@ -559,6 +653,24 @@ mod tests {
         let s = "héllo wörld ☃";
         let t = tail_chars(s, 3);
         assert_eq!(t.chars().count(), 3);
+    }
+
+    #[test]
+    fn redact_secrets_masks_keys_and_bearer_tokens() {
+        let masked = redact_secrets("auth failed: Bearer sk-or-v1-abc123def456ghi789jkl012 nope");
+        assert!(!masked.contains("sk-or-v1-abc123def456ghi789jkl012"));
+        assert!(masked.contains("[redacted]"));
+        // A long opaque mixed token is masked even without a known prefix.
+        let masked2 = redact_secrets("session ABCdef0123456789ABCdef0123 done");
+        assert!(masked2.contains("[redacted]"));
+        assert!(masked2.contains("done"));
+    }
+
+    #[test]
+    fn redact_secrets_keeps_plain_diagnostics() {
+        // Ordinary words and file paths must survive so errors stay actionable.
+        let s = "codex exited: model not found at /usr/lib/node/index.js";
+        assert_eq!(redact_secrets(s), s);
     }
 
     #[test]

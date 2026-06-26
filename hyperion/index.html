@@ -157,7 +157,7 @@ display:flex;align-items:center;gap:6px}
 border-left:1px solid var(--line);box-shadow:-8px 0 30px rgba(0,0,0,.16);display:none;flex-direction:column;z-index:45}
 .adock.on{display:flex}
 .ah{background:#2b3a4a;color:#dfe8f1;padding:8px 12px;font-weight:600;display:flex;align-items:center;gap:8px}
-.ah .x{margin-left:auto;cursor:pointer}
+.ah .x{margin-left:auto;cursor:pointer;border:0;background:transparent;color:inherit;font:inherit;padding:0 4px;line-height:1}
 .abadge{font-size:10px;font-weight:700;padding:1px 8px;border-radius:10px;background:#cfe2fb;color:#10243b}
 .abadge.off{background:#ffe3df;color:#b3261e}
 .amsgs{flex:1;overflow:auto;padding:10px 12px;display:flex;flex-direction:column;gap:8px;background:#f7f9fb}
@@ -193,7 +193,7 @@ border-left:1px solid var(--line);box-shadow:-8px 0 30px rgba(0,0,0,.16);display
   <label class="mut" style="font-size:12px">Guide:
     <select id="pbsel"><option value="">- none -</option></select>
   </label>
-  <button id="agentbtn" class="appbtn" title="Ask the bOS Co-pilot">&#128172; Agent</button>
+  <button type="button" id="agentbtn" class="appbtn" title="Ask the bOS Co-pilot">&#128172; Agent</button>
   <button id="vaultbtn" class="appbtn" title="Encrypted secrets vault">&#128274; Vault</button>
   <span class="ham">&#9776;</span>
 </div>
@@ -254,13 +254,13 @@ border-left:1px solid var(--line);box-shadow:-8px 0 30px rgba(0,0,0,.16);display
 <div id="agent" class="adock">
   <div class="ah">&#128172; bOS Co-pilot
     <span id="aruntime" class="abadge off">no runtime</span>
-    <span class="x" onclick="closeAgent()">&#10005;</span></div>
+    <button type="button" class="x" onclick="closeAgent()" aria-label="Close agent">&#10005;</button></div>
   <div id="amsgs" class="amsgs"></div>
   <div class="afoot">
     <textarea id="aq" placeholder="Ask how to implement something in ComfortClick&hellip;  (Ctrl+Enter to send)"></textarea>
     <div class="arow">
       <label class="afocuslbl"><input type="checkbox" id="afocus" checked> use selected node as context</label>
-      <button id="asend" class="asend">Ask</button>
+      <button type="button" id="asend" class="asend">Ask</button>
     </div>
   </div>
 </div>

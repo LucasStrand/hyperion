@@ -619,9 +619,12 @@ fn openrouter_key_present(vault: &State<'_, Mutex<Vault>>) -> bool {
         return true;
     }
     let v = vault.lock().unwrap_or_else(|e| e.into_inner());
+    // Check the stored *value*, not just the name: `Vault::set` rejects empty
+    // names but not empty values, so a blank `openrouter_api_key` would otherwise
+    // report available and then fail in `resolve_openrouter_key` during an ask.
     v.is_unlocked()
-        && v.names()
-            .map(|names| names.iter().any(|n| n == "openrouter_api_key"))
+        && v.reveal("openrouter_api_key")
+            .map(|val| !val.trim().is_empty())
             .unwrap_or(false)
 }
 
@@ -821,10 +824,19 @@ async fn agent_ask(
         let s = store.lock().unwrap_or_else(|e| e.into_inner());
         build_grounding(&s, focus_path.as_deref())
     };
+    // Escape the fence delimiters in the .bos-derived grounding so a hostile node
+    // name/path containing `</bos-data>` cannot close the untrusted-data section
+    // and inject higher-priority-looking prompt text. (The user's turn is fenced
+    // separately by a random sentinel in `compose_prompt`, but the bos-data block
+    // must not be escapable either.)
+    let safe_grounding = grounding
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;");
     let system = format!(
         "{}\n\n# Loaded system context (untrusted data)\n<bos-data>\n{}\n</bos-data>",
         agent::INSTINCTS,
-        grounding
+        safe_grounding
     );
 
     // Resolve the key (briefly locking the vault) only for the cloud path.
