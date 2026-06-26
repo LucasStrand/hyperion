@@ -200,6 +200,11 @@ display:flex;align-items:center;gap:6px}
     <div class="vh">&#128274; Secrets Vault <span id="vstatus" class="vstat locked">Locked</span>
       <span class="x" onclick="closeVault()">&#10005;</span></div>
     <div class="vb">
+      <div class="vrow" id="vauthrow">
+        <button id="vsignin" class="appbtn">&#63743; Sign in with Microsoft</button>
+        <button id="vsignout" class="appbtn" style="display:none">Sign out</button>
+        <span class="mut" id="vwho">Not signed in</span>
+      </div>
       <div class="vrow">
         <button id="vunlock" class="appbtn">Unlock</button>
         <button id="vlock" class="appbtn">Lock</button>

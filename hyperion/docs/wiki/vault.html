@@ -74,10 +74,27 @@ ciphertext decrypts to  =  JSON { "&lt;secret-name&gt;": "&lt;secret-value&gt;",
   <div class="flow">Unlock  ─▶  fetch DEK from OS keychain (created on first use)
         ─▶  if vault.bin exists, verify the DEK actually decrypts it
         ─▶  hold DEK in memory; create an empty vault on first run
-Lock    ─▶  zeroize the in-memory DEK (the blob stays encrypted on disk)</div>
-  <div class="note"><strong>Coming in Phase 1 step 2 — Microsoft Entra SSO.</strong> Unlock will be gated
-    behind a successful Microsoft Entra sign-in (OAuth 2.0 authorization-code + PKCE, loopback redirect
-    <code>http://localhost</code>) for defense-in-depth. Until that lands, the OS keychain is the gate.</div>
+Lock    ─▶  zeroize the in-memory DEK (the blob stays encrypted on disk)
+
+Unlock is GATED on a Microsoft Entra sign-in (below); sign-out also locks the vault.</div>
+  <h2>Microsoft Entra SSO <span class="pill done">Built</span></h2>
+  <p>The vault is gated behind a real Microsoft Entra sign-in (defense-in-depth — on top of the keychain).
+    Hyperion uses the OAuth 2.0 <strong>authorization-code flow with PKCE</strong>, the correct flow for a
+    native desktop <em>public client</em> (no client secret):</p>
+  <div class="flow">1. Generate PKCE verifier + S256 challenge, plus CSRF `state` and OIDC `nonce`.
+2. Bind a loopback listener on 127.0.0.1:&lt;ephemeral&gt; → redirect_uri http://127.0.0.1:&lt;port&gt;.
+3. Open the system browser to the Entra authorize endpoint; the user signs in.
+4. Entra redirects to the loopback with ?code=…&amp;state=…  (stray probes are ignored).
+5. Exchange the code at the token endpoint (TLS) sending the PKCE verifier → id_token.
+6. Validate state, then aud / issuer(exact) / exp / nonce on the id_token.</div>
+  <ul>
+    <li>Tokens are <strong>never persisted</strong> — only the in-memory "signed in" fact + display name.</li>
+    <li>Scope is <code>openid profile</code> only — no <code>offline_access</code>, so no refresh token is ever issued.</li>
+    <li>The client &amp; tenant IDs are public identifiers (overridable via <code>HYPERION_ENTRA_*</code> env).</li>
+  </ul>
+  <div class="note"><strong>Tracked hardening:</strong> full id_token <em>signature</em> validation against the tenant
+    JWKS. Tokens here arrive directly from the token endpoint over authenticated TLS (back channel), so per OIDC the
+    signature is not strictly required for this flow — but JWKS validation is defense-in-depth and is logged as a follow-up.</div>
 
   <h2>The plaintext-secret guardrail</h2>
   <p>Before any free text is stored as project context, <code>scan_secret</code> checks it for things that
@@ -102,6 +119,9 @@ Lock    ─▶  zeroize the in-memory DEK (the blob stays encrypted on disk)</di
     <tr><td><code>vault_delete_secret</code></td><td><code>bool</code></td><td>Whether the secret existed.</td></tr>
     <tr><td><code>vault_reveal_secret</code></td><td><code>string</code></td><td>Raw value — used sparingly; requires unlocked.</td></tr>
     <tr><td><code>scan_secret</code></td><td><code>[{kind,detail}]</code></td><td>Guardrail; <code>detail</code> is always masked.</td></tr>
+    <tr><td><code>entra_status</code></td><td><code>{authenticated,identity}</code></td><td>Whether an Entra sign-in is held.</td></tr>
+    <tr><td><code>entra_sign_in</code></td><td>status</td><td>Interactive browser sign-in (PKCE). Blocking.</td></tr>
+    <tr><td><code>entra_sign_out</code></td><td>status</td><td>Clears auth <em>and</em> locks the vault.</td></tr>
   </table>
 
   <h2>Boundaries</h2>
@@ -118,6 +138,7 @@ Lock    ─▶  zeroize the in-memory DEK (the blob stays encrypted on disk)</di
   <table>
     <tr><th>Path</th><th>Role</th></tr>
     <tr><td><code>src-tauri/src/vault.rs</code></td><td>Crypto core, keychain, guardrail, unit tests.</td></tr>
+    <tr><td><code>src-tauri/src/entra.rs</code></td><td>Entra SSO: PKCE flow, loopback listener, id_token checks, tests.</td></tr>
     <tr><td><code>src-tauri/src/lib.rs</code></td><td>The 8 Tauri commands + managed <code>Mutex&lt;Vault&gt;</code>.</td></tr>
     <tr><td><code>index.html</code> / <code>src/main.ts</code></td><td>The <span style="white-space:nowrap">🔒 Vault</span> modal: unlock/lock, add/list/delete, guardrail scan.</td></tr>
     <tr><td><code>&lt;projects-root&gt;/vault.bin</code></td><td>The encrypted blob (override with <code>HYPERION_VAULT</code>).</td></tr>

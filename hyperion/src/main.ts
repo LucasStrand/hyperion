@@ -28,6 +28,10 @@ const api = {
   vaultDelete: (name) => invoke("vault_delete_secret", { name }),
   vaultReveal: (name) => invoke("vault_reveal_secret", { name }),
   scanSecret:  (text) => invoke("scan_secret", { text }),
+  // Microsoft Entra SSO (src-tauri/src/entra.rs)
+  entraStatus:  () => invoke("entra_status"),
+  entraSignIn:  () => invoke("entra_sign_in"),
+  entraSignOut: () => invoke("entra_sign_out"),
 };
 
 const $ = (s) => document.querySelector(s), $$ = (s) => [...document.querySelectorAll(s)];
@@ -329,7 +333,17 @@ function gotoStep(i){STEP=i; const s=(PB.steps||[])[i]; if(!s)return;
 function closeGuide(){$('#guide').style.display='none';$('#pbsel').value='';
   $$('.tn.guide').forEach(x=>x.classList.remove('guide')); ACTIVE_HL=null; if(CUR) renderPanel();}
 
-// ---------- secrets vault (src-tauri/src/vault.rs) ----------
+// ---------- Entra SSO + secrets vault (src-tauri/src/entra.rs, vault.rs) ----------
+let vAuthed=false;
+async function refreshAuth(){
+  let st; try{ st=await api.entraStatus(); }catch(e){ st={authenticated:false,identity:null}; }
+  vAuthed = !!st.authenticated;
+  $('#vsignin').style.display  = vAuthed?'none':'';
+  $('#vsignout').style.display = vAuthed?'':'none';
+  $('#vwho').textContent = vAuthed && st.identity
+    ? ('Signed in: '+(st.identity.name||st.identity.username||'Microsoft account'))
+    : 'Not signed in';
+}
 function renderVaultStatus(st){
   const unlocked = !!(st && st.unlocked);
   const el=$('#vstatus');
@@ -337,11 +351,14 @@ function renderVaultStatus(st){
   el.textContent = unlocked
     ? ('Unlocked'+(st.count>=0?(' · '+st.count+' secret'+(st.count===1?'':'s')):''))
     : (st && st.exists ? 'Locked' : 'Locked (empty)');
-  $('#vunlock').disabled = unlocked;
+  // Unlock requires an Entra sign-in (defense-in-depth, enforced in the backend too).
+  $('#vunlock').disabled = unlocked || !vAuthed;
+  $('#vunlock').title = vAuthed ? '' : 'Sign in with Microsoft first';
   $('#vlock').disabled   = !unlocked;
   $('#vname').disabled = $('#vval').disabled = $('#vsave').disabled = !unlocked;
 }
 async function refreshVault(){
+  await refreshAuth();
   let st; try{ st=await api.vaultStatus(); }catch(e){ st={exists:false,unlocked:false,count:-1}; }
   renderVaultStatus(st);
   const list=$('#vlist');
@@ -459,8 +476,14 @@ async function init(){
   $('#projnew').onclick=newProject;
   $('#projimport').onclick=importBos;
 
-  // vault
+  // vault + Entra SSO
   $('#vaultbtn').onclick=openVault;
+  $('#vsignin').onclick=async()=>{
+    const btn=$('#vsignin'); btn.disabled=true; $('#vwho').textContent='Opening browser — complete sign-in…';
+    try{ await api.entraSignIn(); }catch(e){ alert('Sign-in failed: '+e); }
+    btn.disabled=false; await refreshVault();
+  };
+  $('#vsignout').onclick=async()=>{ try{ await api.entraSignOut(); }catch(e){ alert(e); } await refreshVault(); };
   $('#vunlock').onclick=async()=>{ try{ await api.vaultUnlock(); await refreshVault(); }catch(e){ alert('Unlock failed: '+e); } };
   $('#vlock').onclick=async()=>{ try{ await api.vaultLock(); await refreshVault(); }catch(e){ alert(e); } };
   $('#vsave').onclick=saveSecret;

@@ -8,6 +8,7 @@
 //
 // Strictly read-only with respect to the bOS system — never writes to it.
 
+mod entra;
 mod projects;
 mod vault;
 
@@ -18,6 +19,7 @@ use std::sync::Mutex;
 use serde_json::{json, Value};
 use tauri::State;
 
+use entra::Auth;
 use projects::Projects;
 use vault::Vault;
 
@@ -491,10 +493,20 @@ fn vault_status(vault: State<'_, Mutex<Vault>>) -> Value {
     vault.lock().unwrap_or_else(|e| e.into_inner()).status()
 }
 
-/// Unlock the vault using the OS-keychain DEK (Phase 1 step 2 gates this behind
-/// Entra SSO). Idempotent; creates an empty vault on first unlock.
+/// Unlock the vault using the OS-keychain DEK. Gated behind a Microsoft Entra
+/// sign-in (defense-in-depth). Idempotent; creates an empty vault on first use.
 #[tauri::command]
-fn vault_unlock(vault: State<'_, Mutex<Vault>>) -> Result<Value, String> {
+fn vault_unlock(
+    auth: State<'_, Mutex<Auth>>,
+    vault: State<'_, Mutex<Vault>>,
+) -> Result<Value, String> {
+    // Hold the auth guard across the vault unlock (lock order: auth before
+    // vault, consistent everywhere) so a concurrent sign-out can't slip in
+    // between the check and the unlock.
+    let a = auth.lock().unwrap_or_else(|e| e.into_inner());
+    if !a.is_authenticated() {
+        return Err("sign in with Microsoft Entra before unlocking the vault".into());
+    }
     let mut v = vault.lock().unwrap_or_else(|e| e.into_inner());
     v.unlock()?;
     Ok(v.status())
@@ -553,6 +565,37 @@ fn scan_secret(text: String) -> Vec<Value> {
     vault::scan_for_secrets(&text)
 }
 
+// ----------------------------- Entra SSO commands -----------------------------
+
+/// Auth status: `{ authenticated, identity }`.
+#[tauri::command]
+fn entra_status(auth: State<'_, Mutex<Auth>>) -> Value {
+    auth.lock().unwrap_or_else(|e| e.into_inner()).status()
+}
+
+/// Run the interactive Microsoft Entra sign-in (opens the system browser).
+/// Blocking; the auth lock is released during the browser round-trip so other
+/// commands are not starved.
+#[tauri::command]
+fn entra_sign_in(auth: State<'_, Mutex<Auth>>) -> Result<Value, String> {
+    // Perform the (slow, blocking) browser flow WITHOUT holding the lock.
+    let mut runner = Auth::default();
+    runner.sign_in()?;
+    let status = runner.status();
+    // Commit the result under the lock only briefly.
+    *auth.lock().unwrap_or_else(|e| e.into_inner()) = runner;
+    Ok(status)
+}
+
+/// Sign out of Entra and lock the vault (signing out must drop secret access).
+#[tauri::command]
+fn entra_sign_out(auth: State<'_, Mutex<Auth>>, vault: State<'_, Mutex<Vault>>) -> Value {
+    let mut a = auth.lock().unwrap_or_else(|e| e.into_inner());
+    a.sign_out();
+    vault.lock().unwrap_or_else(|e| e.into_inner()).lock();
+    a.status()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let workspace = default_workspace();
@@ -566,6 +609,7 @@ pub fn run() {
         .manage(Mutex::new(store))
         .manage(Mutex::new(projects))
         .manage(Mutex::new(vault))
+        .manage(Mutex::new(Auth::default()))
         .invoke_handler(tauri::generate_handler![
             app_state,
             get_tree,
@@ -585,7 +629,10 @@ pub fn run() {
             vault_set_secret,
             vault_delete_secret,
             vault_reveal_secret,
-            scan_secret
+            scan_secret,
+            entra_status,
+            entra_sign_in,
+            entra_sign_out
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
