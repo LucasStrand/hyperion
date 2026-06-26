@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Encrypted Vault · Hyperion Wiki</title>
+<!-- Feature doc: the Phase 1 secrets vault. Themeable via :root tokens (M4). -->
+<style>
+  :root{
+    --bg:#f4f6f8; --pan:#ffffff; --ink:#1f2a36; --mut:#67788a; --line:#dce3ea;
+    --acc:#2b6cb0; --acc-soft:#e8f1fb; --ok:#2e9e6a; --warn:#b3261e; --soon:#d98014;
+    --code:#0b3d2e; --codebg:#eef4f1; --radius:10px;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --mono:Consolas,ui-monospace,"SFMono-Regular",monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.6}
+  .wrap{max-width:880px;margin:0 auto;padding:36px 22px 80px}
+  a{color:var(--acc)}
+  .crumb{font-size:13px;color:var(--mut);margin-bottom:8px}
+  .kicker{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--acc);font-weight:600}
+  h1{font-size:30px;margin:.16em 0 .12em}
+  .lede{font-size:17px;color:var(--mut);max-width:64ch}
+  h2{font-size:15px;letter-spacing:.04em;text-transform:uppercase;color:var(--mut);
+     margin:34px 0 10px;border-bottom:1px solid var(--line);padding-bottom:6px}
+  h3{margin:18px 0 4px;font-size:16px}
+  p,li{font-size:14.5px}
+  code{font-family:var(--mono);background:var(--codebg);color:var(--code);padding:1px 5px;border-radius:4px;font-size:13px}
+  pre{background:#11202b;color:#d6e2ec;padding:12px 14px;border-radius:var(--radius);overflow:auto;font-family:var(--mono);font-size:12.5px;line-height:1.5}
+  .pill{display:inline-block;font-size:11px;font-weight:600;border-radius:999px;padding:2px 9px}
+  .pill.done{background:#eaf7f0;color:var(--ok)} .pill.soon{background:#fdf3e6;color:var(--soon)}
+  table{border-collapse:collapse;width:100%;margin:10px 0;font-size:13.5px}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:var(--acc-soft);font-weight:600}
+  td code{white-space:nowrap}
+  .note{background:var(--acc-soft);border-left:3px solid var(--acc);border-radius:0 6px 6px 0;padding:10px 14px;margin:14px 0}
+  .warn{background:#fdecea;border-left:3px solid var(--warn);border-radius:0 6px 6px 0;padding:10px 14px;margin:14px 0}
+  .flow{font-family:var(--mono);font-size:12.5px;background:var(--pan);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;white-space:pre;overflow:auto}
+  .foot{margin-top:44px;border-top:1px solid var(--line);padding-top:14px;color:var(--mut);font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="crumb"><a href="index.html">&larr; Hyperion Wiki</a> / Vault</div>
+  <div class="kicker">Phase 1 · milestone M6 · the secure shell</div>
+  <h1>The Encrypted Vault <span class="pill done">Built</span></h1>
+  <p class="lede">Where Hyperion keeps the secrets it must never leak: bOS logins, device credentials,
+    API tokens. Encrypted at rest, decryptable only on this machine, and never echoed back to the UI.</p>
+
+  <h2>Why it exists</h2>
+  <p>Hyperion catalogs real building systems — and to talk to them it needs real credentials. Those can
+    never sit in a project's SQLite store, a snapshot, a note, or the wiki in plaintext. The vault is the
+    one place a secret is allowed to live, and even there it is encrypted. A companion
+    <strong>guardrail</strong> scans free text for credentials before they are stored as context, so a
+    pasted password is caught instead of silently persisted.</p>
+
+  <h2>How it is protected</h2>
+  <p>One file on disk, <code>vault.bin</code>, holds every secret as a single authenticated-encryption blob:</p>
+  <div class="flow">vault.bin  =  nonce(12 bytes) || AES-256-GCM ciphertext
+ciphertext decrypts to  =  JSON { "&lt;secret-name&gt;": "&lt;secret-value&gt;", ... }</div>
+  <ul>
+    <li><strong>Cipher:</strong> AES-256-GCM (authenticated — tampering is detected, not silently decrypted).</li>
+    <li><strong>Nonce:</strong> a fresh 96-bit random nonce per save, from the OS CSPRNG (<code>OsRng</code>).</li>
+    <li><strong>The key (DEK):</strong> a 32-byte data-encryption key that <em>never touches disk in the clear</em>.
+        It lives in the <strong>OS keychain</strong> (Windows Credential Manager via the <code>keyring</code> crate;
+        service <code>hyperion-vault</code>, account <code>dek</code>, stored base64).</li>
+    <li><strong>In memory:</strong> the DEK is held only while the vault is <em>unlocked</em>, and is
+        <strong>zeroized</strong> on lock and on drop — along with the transient base64/byte buffers used to load it.</li>
+  </ul>
+  <div class="note">At rest the blob is useless without the keychain DEK; the keychain entry is itself
+    protected by the operating-system user login. Two independent locks, both local to the machine.</div>
+
+  <h2>Locking &amp; unlocking</h2>
+  <div class="flow">Unlock  ─▶  fetch DEK from OS keychain (created on first use)
+        ─▶  if vault.bin exists, verify the DEK actually decrypts it
+        ─▶  hold DEK in memory; create an empty vault on first run
+Lock    ─▶  zeroize the in-memory DEK (the blob stays encrypted on disk)</div>
+  <div class="note"><strong>Coming in Phase 1 step 2 — Microsoft Entra SSO.</strong> Unlock will be gated
+    behind a successful Microsoft Entra sign-in (OAuth 2.0 authorization-code + PKCE, loopback redirect
+    <code>http://localhost</code>) for defense-in-depth. Until that lands, the OS keychain is the gate.</div>
+
+  <h2>The plaintext-secret guardrail</h2>
+  <p>Before any free text is stored as project context, <code>scan_secret</code> checks it for things that
+    belong in the vault. Every finding is reported with a <strong>masked</strong> sample, so the warning
+    itself never echoes the secret:</p>
+  <table>
+    <tr><th>Detector</th><th>Catches</th></tr>
+    <tr><td><code>private_key</code></td><td>PEM private-key blocks (<code>-----BEGIN … PRIVATE KEY-----</code>)</td></tr>
+    <tr><td><code>aws_access_key</code></td><td>AWS access-key IDs (<code>AKIA…</code>)</td></tr>
+    <tr><td><code>bearer_token</code></td><td><code>Bearer …</code> / <code>Authorization:</code> tokens</td></tr>
+    <tr><td><code>credential_assignment</code></td><td><code>password=</code>, <code>secret:</code>, <code>api_key=</code>, <code>token=</code> … with a non-trivial value</td></tr>
+  </table>
+
+  <h2>Commands (Tauri ⇄ webview)</h2>
+  <table>
+    <tr><th>Command</th><th>Returns</th><th>Notes</th></tr>
+    <tr><td><code>vault_status</code></td><td><code>{exists,unlocked,count}</code></td><td>Never returns values; <code>count</code> is <code>-1</code> when locked.</td></tr>
+    <tr><td><code>vault_unlock</code></td><td>status</td><td>Loads DEK from keychain; idempotent.</td></tr>
+    <tr><td><code>vault_lock</code></td><td>status</td><td>Zeroizes the in-memory DEK.</td></tr>
+    <tr><td><code>vault_list_secrets</code></td><td><code>string[]</code></td><td>Sorted names only — never values.</td></tr>
+    <tr><td><code>vault_set_secret</code></td><td>—</td><td>Insert/replace; rejects empty names.</td></tr>
+    <tr><td><code>vault_delete_secret</code></td><td><code>bool</code></td><td>Whether the secret existed.</td></tr>
+    <tr><td><code>vault_reveal_secret</code></td><td><code>string</code></td><td>Raw value — used sparingly; requires unlocked.</td></tr>
+    <tr><td><code>scan_secret</code></td><td><code>[{kind,detail}]</code></td><td>Guardrail; <code>detail</code> is always masked.</td></tr>
+  </table>
+
+  <h2>Boundaries</h2>
+  <ul>
+    <li>The vault is <strong>strictly local</strong> — git-ignored (<code>vault.bin</code>), per-machine, never synced.</li>
+    <li>Hyperion stays <strong>read-only</strong> toward bOS; the vault holds credentials, it does not push them anywhere.</li>
+    <li>Error messages never include raw secret material.</li>
+  </ul>
+  <div class="warn"><strong>Tracked hardening (Phase 1 follow-up):</strong> secret <em>values</em> held transiently in
+    memory during a get/set are not yet zeroized (the at-rest blob and the DEK already are). Wrapping values in
+    <code>Zeroizing</code>/<code>SecretString</code> is a logged item.</div>
+
+  <h2>Where it lives</h2>
+  <table>
+    <tr><th>Path</th><th>Role</th></tr>
+    <tr><td><code>src-tauri/src/vault.rs</code></td><td>Crypto core, keychain, guardrail, unit tests.</td></tr>
+    <tr><td><code>src-tauri/src/lib.rs</code></td><td>The 8 Tauri commands + managed <code>Mutex&lt;Vault&gt;</code>.</td></tr>
+    <tr><td><code>index.html</code> / <code>src/main.ts</code></td><td>The <span style="white-space:nowrap">🔒 Vault</span> modal: unlock/lock, add/list/delete, guardrail scan.</td></tr>
+    <tr><td><code>&lt;projects-root&gt;/vault.bin</code></td><td>The encrypted blob (override with <code>HYPERION_VAULT</code>).</td></tr>
+  </table>
+
+  <div class="foot">Documented as built · reviewed by ECC rust-reviewer before merge · part of the main wiki collection.</div>
+</div>
+</body>
+</html>

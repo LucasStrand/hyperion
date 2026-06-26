@@ -51,9 +51,22 @@
     </span>
   </div>
 
+  <h2>Secure shell — Phase 1</h2>
+  <div class="grid">
+    <a class="card" href="vault.html">
+      <span class="pill done">Built</span>
+      <h3>The Encrypted Vault</h3>
+      <p>AES-256-GCM secrets, key in the OS keychain, plaintext-secret guardrail. Never echoed to the UI.</p>
+    </a>
+    <span class="card todo">
+      <span class="pill soon">Phase 1 · step 2</span>
+      <h3>Microsoft Entra SSO</h3>
+      <p>Unlock gated behind Entra sign-in (OAuth 2.0 + PKCE, loopback redirect).</p>
+    </span>
+  </div>
+
   <h2>Coming next</h2>
   <div class="grid">
-    <span class="card todo"><span class="pill soon">Phase 1</span><h3>Vault &amp; Entra SSO</h3><p>Encrypted secrets unlocked by Microsoft sign-in.</p></span>
     <span class="card todo"><span class="pill soon">Phase 2</span><h3>The Agent</h3><p>Runtime adapter, RAG, playbook emission, memory + instincts.</p></span>
     <span class="card todo"><span class="pill soon">Phase 4</span><h3>Theming</h3><p>Token-based themes &amp; static-site export of this vault.</p></span>
   </div>
