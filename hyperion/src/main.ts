@@ -32,6 +32,9 @@ const api = {
   entraStatus:  () => invoke("entra_status"),
   entraSignIn:  () => invoke("entra_sign_in"),
   entraSignOut: () => invoke("entra_sign_out"),
+  // agent runtime adapter (src-tauri/src/agent.rs)
+  agentStatus: () => invoke("agent_status"),
+  agentAsk:    (question, focusPath) => invoke("agent_ask", { question, focusPath }),
 };
 
 const $ = (s) => document.querySelector(s), $$ = (s) => [...document.querySelectorAll(s)];
@@ -394,7 +397,62 @@ async function scanGuard(){
 }
 
 // expose handlers referenced by inline onclick="" attributes
-Object.assign(window, { navigate, gotoStep, closeGuide, showNode, showDiff, closeVault });
+// ---------- agent dock (Phase 2, M2/M9) ----------
+let agentBusy=false;
+async function refreshAgentStatus(){
+  const b=$('#aruntime');
+  try{
+    const st=await api.agentStatus();
+    if(st.any){ b.textContent=st.active; b.classList.remove('off'); }
+    else { b.textContent='no runtime'; b.classList.add('off'); }
+  }catch(e){ b.textContent='status error'; b.classList.add('off'); }
+}
+function openAgent(){ $('#agent').classList.add('on'); refreshAgentStatus(); $('#aq').focus(); }
+function closeAgent(){ $('#agent').classList.remove('on'); }
+// Minimal renderer: escape everything, then turn ``` fenced blocks into <pre>
+// (a ```playbook fence is highlighted; the engine wiring lands in a later unit).
+function renderAnswer(text){
+  const parts=(''+text).split('```');
+  let html='';
+  for(let i=0;i<parts.length;i++){
+    if(i%2===0){ html+=esc(parts[i]); continue; }
+    let body=parts[i]; const nl=body.indexOf('\n');
+    const lang=(nl>=0?body.slice(0,nl):'').trim().toLowerCase();
+    if(nl>=0) body=body.slice(nl+1);
+    const isPb=lang==='playbook';
+    if(isPb) html+='<div class="pbtag">&#9654; Playbook</div>';
+    html+='<pre class="'+(isPb?'pb':'')+'">'+esc(body.replace(/\n$/,''))+'</pre>';
+  }
+  return html;
+}
+function addMsg(role, text, runtime){
+  const box=document.createElement('div'); box.className='amsg '+role;
+  let inner='';
+  if(role==='bot') inner+='<div class="who">'+esc(runtime||'agent')+'</div>';
+  else if(role==='err') inner+='<div class="who">error</div>';
+  inner+=(role==='bot') ? renderAnswer(text) : esc(text);
+  box.innerHTML=inner;
+  const m=$('#amsgs'); m.appendChild(box); m.scrollTop=m.scrollHeight;
+  return box;
+}
+async function sendAsk(){
+  if(agentBusy) return;
+  const ta=$('#aq'); const q=ta.value.trim(); if(!q) return;
+  const focusPath=($('#afocus').checked && CUR && CUR.path) ? CUR.path : null;
+  addMsg('user', q); ta.value='';
+  agentBusy=true; const btn=$('#asend'); btn.disabled=true; btn.textContent='Asking…';
+  const pending=addMsg('note','thinking…');
+  try{
+    const res=await api.agentAsk(q, focusPath);
+    pending.remove(); addMsg('bot', res.answer, res.runtime);
+  }catch(e){
+    pending.remove(); addMsg('err', ''+e);
+  }finally{
+    agentBusy=false; btn.disabled=false; btn.textContent='Ask';
+  }
+}
+
+Object.assign(window, { navigate, gotoStep, closeGuide, showNode, showDiff, closeVault, closeAgent });
 
 // ---------- config render (state + tree); reused after a project/snapshot change ----------
 async function renderConfig(){
@@ -489,5 +547,11 @@ async function init(){
   $('#vsave').onclick=saveSecret;
   $('#vscanbtn').onclick=scanGuard;
   $('#vault').addEventListener('click',e=>{ if(e.target.id==='vault') closeVault(); });
+
+  // agent dock
+  $('#agentbtn').onclick=openAgent;
+  $('#asend').onclick=sendAsk;
+  $('#aq').addEventListener('keydown',e=>{ if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){ e.preventDefault(); sendAsk(); }});
+  refreshAgentStatus();
 }
 init();

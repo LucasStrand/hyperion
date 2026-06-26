@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Agent &amp; Runtime Adapter · Hyperion Wiki</title>
+<!-- Feature doc: the Phase 2 agent core. Themeable via :root tokens (M4). -->
+<style>
+  :root{
+    --bg:#f4f6f8; --pan:#ffffff; --ink:#1f2a36; --mut:#67788a; --line:#dce3ea;
+    --acc:#2b6cb0; --acc-soft:#e8f1fb; --ok:#2e9e6a; --warn:#b3261e; --soon:#d98014;
+    --code:#0b3d2e; --codebg:#eef4f1; --radius:10px;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --mono:Consolas,ui-monospace,"SFMono-Regular",monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.6}
+  .wrap{max-width:880px;margin:0 auto;padding:36px 22px 80px}
+  a{color:var(--acc)}
+  .crumb{font-size:13px;color:var(--mut);margin-bottom:8px}
+  .kicker{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--acc);font-weight:600}
+  h1{font-size:30px;margin:.16em 0 .12em}
+  .lede{font-size:17px;color:var(--mut);max-width:64ch}
+  h2{font-size:15px;letter-spacing:.04em;text-transform:uppercase;color:var(--mut);
+     margin:34px 0 10px;border-bottom:1px solid var(--line);padding-bottom:6px}
+  h3{margin:18px 0 4px;font-size:16px}
+  p,li{font-size:14.5px}
+  code{font-family:var(--mono);background:var(--codebg);color:var(--code);padding:1px 5px;border-radius:4px;font-size:13px}
+  pre{background:#11202b;color:#d6e2ec;padding:12px 14px;border-radius:var(--radius);overflow:auto;font-family:var(--mono);font-size:12.5px;line-height:1.5}
+  .pill{display:inline-block;font-size:11px;font-weight:600;border-radius:999px;padding:2px 9px}
+  .pill.done{background:#eaf7f0;color:var(--ok)} .pill.soon{background:#fdf3e6;color:var(--soon)}
+  table{border-collapse:collapse;width:100%;margin:10px 0;font-size:13.5px}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:var(--acc-soft);font-weight:600}
+  td code{white-space:nowrap}
+  .note{background:var(--acc-soft);border-left:3px solid var(--acc);border-radius:0 6px 6px 0;padding:10px 14px;margin:14px 0}
+  .warn{background:#fdecea;border-left:3px solid var(--warn);border-radius:0 6px 6px 0;padding:10px 14px;margin:14px 0}
+  .flow{font-family:var(--mono);font-size:12.5px;background:var(--pan);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;white-space:pre;overflow:auto}
+  .foot{margin-top:44px;border-top:1px solid var(--line);padding-top:14px;color:var(--mut);font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="crumb"><a href="index.html">&larr; Hyperion Wiki</a> / The Agent</div>
+  <div class="kicker">Phase 2 · milestones M2 + M9 · the agent core</div>
+  <h1>The Agent &amp; Runtime Adapter <span class="pill done">Built</span></h1>
+  <p class="lede">The brain Hyperion talks to. One small interface over three interchangeable
+    backends &mdash; preferring the model running on your own machine &mdash; grounded in the
+    <em>loaded</em> <code>.bos</code> so its answers cite real nodes, not guesses.</p>
+
+  <h2>Why it exists</h2>
+  <p>Hyperion is meant to be <em>operated</em> by an AI agent that knows ComfortClick bOS and can teach,
+    not just answer. But which model? The two operators run capable hardware, so Hyperion prefers a
+    <strong>local</strong> runtime and only reaches the cloud when it has to. The adapter makes the model a
+    swappable part: the rest of the app talks to one <code>ask()</code> and never cares who answered.</p>
+
+  <h2>The three runtimes</h2>
+  <p>Detected and selected in strict preference order &mdash; the first one available wins, unless you
+    override it:</p>
+  <table>
+    <tr><th>Order</th><th>Runtime</th><th>How it's reached</th><th>Detected by</th></tr>
+    <tr><td>1</td><td><strong>Claude Code</strong></td><td><code>claude -p</code>, prompt on <em>stdin</em></td>
+      <td>the <code>claude</code> executable on <code>PATH</code></td></tr>
+    <tr><td>2</td><td><strong>Codex</strong></td><td><code>codex exec</code>, prompt on <em>stdin</em></td>
+      <td>the <code>codex</code> executable on <code>PATH</code></td></tr>
+    <tr><td>3</td><td><strong>OpenRouter</strong></td><td>HTTPS <code>chat/completions</code> (cloud fallback)</td>
+      <td>a key in <code>OPENROUTER_API_KEY</code> or the unlocked vault</td></tr>
+  </table>
+  <p>Discovery is Windows-aware: it honours <code>PATHEXT</code>, so an npm <code>claude.cmd</code> shim and a
+    native <code>claude.exe</code> are both found, and batch shims are launched through <code>cmd /C</code>
+    (which <code>CreateProcess</code> can't do directly). Override the choice with the
+    <code>HYPERION_AGENT_RUNTIME</code> environment variable (<code>claude</code> / <code>codex</code> /
+    <code>openrouter</code>); the OpenRouter model defaults to a sensible Claude slug and is overridable via
+    <code>HYPERION_OPENROUTER_MODEL</code>.</p>
+
+  <h2>How an answer is built</h2>
+  <div class="flow">your question  +  focused node (optional)
+      │
+      ▼
+  INSTINCTS (system prompt)  +  grounding from the LOADED .bos
+      │                              ├─ config name + object count
+      │                              ├─ top-level sections (name × children)
+      │                              ├─ object types present (with counts)
+      │                              └─ the node you're looking at (writes / refs)
+      ▼
+  active runtime  →  Claude Code | Codex  (prompt on stdin, no shell)
+                     └ or OpenRouter      (Bearer key, never logged)
+      │
+      ▼
+  text answer  →  chat dock   (fenced ```playbook blocks highlighted)</div>
+  <p>The grounding is <strong>token-bounded</strong> and built fresh from the in-memory render store on every
+    ask. It is the bridge that makes the loaded <code>.bos</code> the agent's source of truth &mdash; the same
+    principle the Configurator already lives by. Phase&nbsp;3's retrieval (embedded context files) will be
+    prepended at exactly this seam.</p>
+
+  <h2>Instincts</h2>
+  <p>Every request is prefixed with a standing system prompt &mdash; the agent's <strong>instincts</strong>
+    (milestone M5). They make good behaviour the default, not a matter of luck:</p>
+  <ul>
+    <li><strong>Teach, don't just do</strong> &mdash; state what to do, show pedagogical steps, give finished
+      code, and when the change is a concrete edit sequence, emit a runnable
+      <code>```playbook</code> JSON block.</li>
+    <li><strong>Ground every claim</strong> in the loaded system; cite real node paths, never invent nodes.</li>
+    <li><strong>Ask when uncertain</strong>, and request context (a datasheet, the Milesight export) when it
+      would genuinely help &mdash; naming exactly what and why.</li>
+    <li><strong>Stay read-only</strong> toward bOS; the user applies edits in the real Configurator.</li>
+    <li><strong>Security reflex</strong> &mdash; flag a plaintext password/key, recommend the vault, never
+      repeat a secret in full.</li>
+    <li><strong>Right artifact for the shape</strong> &mdash; a diff, a flowchart, a table, a timeline.</li>
+    <li><strong>Surface eurekas</strong> &mdash; make the case for a worthwhile improvement and show how.</li>
+  </ul>
+
+  <h2>What's safe about it</h2>
+  <ul>
+    <li><strong>No shell, ever.</strong> Local CLIs are spawned by exact executable with constant arguments;
+      your question travels as <em>stdin data</em>, so it can never be read as a flag or shell syntax.</li>
+    <li><strong>No wedged processes.</strong> stdin is written and stdout/stderr drained on dedicated threads
+      (deadlock-free), under a hard 180-second timeout that <em>kills</em> a hung child.</li>
+    <li><strong>The key stays secret.</strong> The OpenRouter key is read from the environment or the
+      <em>unlocked</em> vault, sent only as a <code>Bearer</code> header, and never written to an error or log.</li>
+    <li><strong>The vault is never read into a prompt.</strong> Grounding draws only on the <code>.bos</code>
+      tree &mdash; secrets never become model context.</li>
+    <li><strong>The dock can't be injected.</strong> Model output is HTML-escaped before rendering; only the
+      fenced-code structure becomes markup.</li>
+  </ul>
+  <div class="warn"><strong>Trust boundary.</strong> Detecting a CLI on <code>PATH</code> means Hyperion will
+    run whatever <code>claude</code>/<code>codex</code> is first on <code>PATH</code> &mdash; the same trust you
+    extend by running those tools yourself. Acceptable for a single-operator desktop tool; revisit if Hyperion
+    ever runs untrusted profiles.</div>
+
+  <h2>Commands</h2>
+  <table>
+    <tr><th>Command</th><th>Does</th></tr>
+    <tr><td><code>agent_status</code></td><td>Which runtimes are present and which is active (for the dock badge).</td></tr>
+    <tr><td><code>agent_ask</code></td><td>Send one grounded question (+ optional focused node path); returns
+      <code>{ runtime, answer }</code>. Holds no lock across the model call.</td></tr>
+  </table>
+
+  <h2>Where it lives</h2>
+  <table>
+    <tr><th>File</th><th>Role</th></tr>
+    <tr><td><code>src-tauri/src/agent.rs</code></td><td>The adapter: CLI discovery, deadlock-free
+      timed subprocess, three backends, the <code>INSTINCTS</code> system prompt.</td></tr>
+    <tr><td><code>src-tauri/src/lib.rs</code></td><td><code>agent_status</code> / <code>agent_ask</code>,
+      grounding builder, runtime + key resolution.</td></tr>
+    <tr><td><code>index.html</code> / <code>src/main.ts</code></td><td>The
+      <span style="white-space:nowrap">💬 Agent</span> chat dock: runtime badge, messages, playbook-aware rendering.</td></tr>
+  </table>
+
+  <h2>Tracked for later phases</h2>
+  <ul>
+    <li><strong>Retrieval (M2/Phase 3)</strong> &mdash; embed ingested files and prepend the top matches to the
+      grounding at the marked seam.</li>
+    <li><strong>Playbook hand-off (M2)</strong> &mdash; route an emitted <code>```playbook</code> block into the
+      existing Configurator engine so its steps render and auto-grade.</li>
+    <li><strong>Persistent memory + roster (M5)</strong> &mdash; per-project memory and multiple specialised
+      agents with a share protocol.</li>
+    <li><strong>Streaming</strong> &mdash; token-by-token output instead of the current single round-trip.</li>
+  </ul>
+
+  <div class="foot">Hyperion · Phase 2 · the agent core &mdash; reviewed by an adversarial multi-lens workflow
+    (security · Rust · process/protocol) before merge. Strictly read-only toward bOS.</div>
+</div>
+</body></html>
