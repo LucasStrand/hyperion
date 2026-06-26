@@ -4,6 +4,7 @@
 // `invoke()` commands implemented in src-tauri/src/lib.rs. All rendering /
 // auto-grading / inline-highlight logic is unchanged.
 import { invoke } from "@tauri-apps/api/core";
+import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 
 // ---------- Tauri command shim (replaces the Flask /api/* routes) ----------
 const api = {
@@ -12,6 +13,12 @@ const api = {
   node:      (path) => invoke("get_node", { path }),       // rejects if not found
   playbooks: () => invoke("list_playbooks"),
   playbook:  (name) => invoke("get_playbook", { name }),
+  // project store (SQLite, src-tauri/src/projects.rs)
+  projects:  () => invoke("list_projects"),
+  newProject:(name) => invoke("create_project", { name }),
+  openProject:(id) => invoke("open_project", { id }),
+  curProject:() => invoke("current_project"),
+  importBos: (path, label) => invoke("import_bos", { path, label }),
 };
 
 const $ = (s) => document.querySelector(s), $$ = (s) => [...document.querySelectorAll(s)];
@@ -316,21 +323,70 @@ function closeGuide(){$('#guide').style.display='none';$('#pbsel').value='';
 // expose handlers referenced by inline onclick="" attributes
 Object.assign(window, { navigate, gotoStep, closeGuide, showNode, showDiff });
 
-// ---------- boot ----------
-async function init(){
+// ---------- config render (state + tree); reused after a project/snapshot change ----------
+async function renderConfig(){
   try{
     const st = await api.state();
     document.title = (st.config||'bOS') + ' - bOS Configurator';
     $('#cfgname').textContent = st.config || '(no config)';
     $('#count').textContent = st.count || 0;
   }catch(e){ $('#cfgname').textContent='(load error)'; }
+  try{ const t=await api.tree(); byEl={}; $('#tree').innerHTML=''; renderTree(t,$('#tree'),0); }catch(e){}
+}
+
+// ---------- project bar (SQLite store: list / create / open / import .bos) ----------
+let activeProject=null;  // {id,name,path} or null
+function setImportEnabled(){ $('#projimport').disabled = !activeProject; }
+
+async function loadProjects(selectId){
+  let list=[]; try{ list=await api.projects(); }catch(e){ list=[]; }
+  const sel=$('#projsel'); sel.innerHTML='<option value="">- none -</option>';
+  list.forEach(p=>{const o=document.createElement('option');o.value=p.id;
+    o.textContent=p.name+' ('+p.snapshots+')';sel.appendChild(o);});
+  if(selectId) sel.value=selectId;
+}
+
+function applyProjectView(view){
+  activeProject = (view && view.active) ? view.active : null;
+  if(activeProject) $('#projsel').value=activeProject.id;
+  setImportEnabled();
+}
+
+async function openProjectById(id){
+  if(!id){ activeProject=null; setImportEnabled(); return; }
+  try{ applyProjectView(await api.openProject(id)); await renderConfig(); }
+  catch(e){ alert('Open project failed: '+e); }
+}
+
+async function newProject(){
+  const name=prompt('New project name:'); if(!name) return;
+  try{ const p=await api.newProject(name); await loadProjects(p.id); await openProjectById(p.id); }
+  catch(e){ alert('Create project failed: '+e); }
+}
+
+async function importBos(){
+  if(!activeProject){ alert('Open or create a project first.'); return; }
+  let path;
+  try{ path=await openFileDialog({ multiple:false, directory:false,
+        filters:[{ name:'bOS config', extensions:['bos'] }] }); }
+  catch(e){ alert('File dialog failed: '+e); return; }
+  if(!path) return;
+  try{
+    const res=await api.importBos(path, null);
+    if(res && res.view) applyProjectView(res.view);
+    await loadProjects(activeProject ? activeProject.id : '');
+    await renderConfig();
+  }catch(e){ alert('Import .bos failed: '+e); }
+}
+
+// ---------- boot ----------
+async function init(){
+  await renderConfig();
 
   $('#search').oninput=e=>{const q=e.target.value.toLowerCase();
     $$('.tn').forEach(el=>{const hit=q&&el.dataset.path.toLowerCase().includes(q);
       el.classList.toggle('hit',!!hit);
       if(hit){expandTo(el.dataset.path); el.scrollIntoView({block:'nearest'});}});};
-
-  try{ const t=await api.tree(); renderTree(t,$('#tree'),0); }catch(e){}
 
   try{ const list=await api.playbooks(); const sel=$('#pbsel');
     list.forEach(p=>{const o=document.createElement('option');o.value=p.file;
@@ -339,5 +395,12 @@ async function init(){
   $('#pbsel').onchange=e=>{if(e.target.value) loadGuide(e.target.value); else closeGuide();};
   $('#gbody').addEventListener('click',e=>{const t=e.target.closest('.dt');
     if(t){e.stopPropagation(); const w=t.closest('.diffwrap'); showDiff(+w.dataset.i,t.dataset.m);}});
+
+  // project bar
+  await loadProjects();
+  try{ applyProjectView(await api.curProject()); }catch(e){}
+  $('#projsel').onchange=e=>openProjectById(e.target.value);
+  $('#projnew').onclick=newProject;
+  $('#projimport').onclick=importBos;
 }
 init();

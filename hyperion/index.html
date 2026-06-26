@@ -19,6 +19,9 @@ display:flex;align-items:center;gap:12px}
 .appbar .back{color:var(--mut);font-size:18px;cursor:default}
 .appbar .title{flex:1;text-align:center;font-size:16px;color:#333}
 .appbar select{font-size:12px;padding:3px 6px;border:1px solid var(--line);border-radius:4px;background:#fff}
+.appbar .appbtn{font-size:12px;padding:3px 9px;border:1px solid var(--line);border-radius:4px;background:#fff;cursor:pointer;color:#333}
+.appbar .appbtn:hover:not(:disabled){background:#f0f3f6}
+.appbar .appbtn:disabled{opacity:.45;cursor:default}
 /* toolbar */
 .toolbar{background:var(--pan);border-bottom:1px solid var(--line);padding:4px 8px;
 display:flex;align-items:center;gap:10px}
@@ -137,6 +140,11 @@ display:flex;align-items:center;gap:6px}
 <div class="appbar">
   <span class="back">&#8249;</span>
   <span class="title" id="title">&nbsp;</span>
+  <label class="mut" style="font-size:12px">Project:
+    <select id="projsel"><option value="">- none -</option></select>
+  </label>
+  <button id="projnew" class="appbtn" title="Create a new project">New</button>
+  <button id="projimport" class="appbtn" title="Parse a .bos into the open project" disabled>Import .bos&hellip;</button>
   <label class="mut" style="font-size:12px">Guide:
     <select id="pbsel"><option value="">- none -</option></select>
   </label>

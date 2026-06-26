@@ -29,6 +29,7 @@ __pycache__/
 logs/
 
 # Hyperion project stores (local SQLite DBs / vault blobs are per-machine, never committed)
+hyperion-projects/
 *.db
 *.db-shm
 *.db-wal

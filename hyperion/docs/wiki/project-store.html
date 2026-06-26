@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Project Store — Hyperion Wiki</title>
+<!--
+  Hyperion wiki page. Part of the main wiki collection (M4 vault).
+  Themeable: every colour/space is a CSS custom property in :root below, so a
+  future theme switcher only swaps these tokens. No build step; open directly.
+-->
+<style>
+  :root{
+    /* design tokens — the theme switcher (M4) will rebind these */
+    --bg:#f4f6f8; --pan:#ffffff; --ink:#1f2a36; --mut:#67788a; --line:#dce3ea;
+    --acc:#2b6cb0; --acc-soft:#e8f1fb; --ok:#2e9e6a; --warn:#d98014; --danger:#c0392b;
+    --code-bg:#0f1722; --code-ink:#e6edf3; --radius:10px; --gap:18px;
+    --mono:ui-monospace,"Cascadia Code",Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.55}
+  .wrap{max-width:960px;margin:0 auto;padding:32px 22px 80px}
+  header.page{border-bottom:1px solid var(--line);padding-bottom:18px;margin-bottom:26px}
+  .kicker{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--acc);font-weight:600}
+  .crumb{font-size:13px;color:var(--mut);margin-bottom:8px}
+  .crumb a{color:var(--mut)}
+  h1{font-size:30px;margin:.18em 0 .1em}
+  h2{font-size:21px;margin:34px 0 10px;padding-top:6px}
+  h3{font-size:16px;margin:20px 0 6px;color:var(--ink)}
+  p{margin:.5em 0}
+  .lede{font-size:17px;color:var(--mut)}
+  .badges{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+  .badge{font-size:12px;padding:3px 10px;border-radius:999px;background:var(--acc-soft);color:var(--acc);font-weight:600}
+  .badge.ro{background:#eaf7f0;color:var(--ok)}
+  table{width:100%;border-collapse:collapse;font-size:14px;margin:8px 0}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:var(--mut)}
+  td code,p code,li code{font-family:var(--mono);font-size:.9em;background:#eef2f6;padding:1px 5px;border-radius:4px}
+  pre{background:var(--code-bg);color:var(--code-ink);border-radius:8px;padding:14px 16px;overflow:auto;font-family:var(--mono);font-size:13px;line-height:1.5}
+  pre .k{color:#7ee787} pre .c{color:#8b98a6;font-style:italic} pre .s{color:#a5d6ff}
+  .callout{border-left:4px solid var(--acc);background:var(--acc-soft);padding:12px 16px;border-radius:0 8px 8px 0;margin:var(--gap) 0}
+  .callout.ro{border-color:var(--ok);background:#eaf7f0}
+  .callout.warn{border-color:var(--warn);background:#fdf3e6}
+  .callout b{display:block;margin-bottom:2px}
+  details{border:1px solid var(--line);border-radius:8px;padding:0 14px;margin:10px 0;background:var(--pan)}
+  details[open]{padding-bottom:10px}
+  summary{cursor:pointer;padding:11px 0;font-weight:600}
+  /* data-flow diagram (HTML-effectiveness: spatial > prose for a pipeline) */
+  .flow{display:flex;align-items:stretch;gap:0;flex-wrap:wrap;margin:10px 0}
+  .step{flex:1 1 150px;min-width:140px;background:var(--pan);border:1px solid var(--line);border-radius:8px;padding:12px;text-align:center;font-size:13px}
+  .step .t{font-weight:700;display:block;margin-bottom:3px}
+  .step .s{color:var(--mut);font-size:12px}
+  .arrow{display:flex;align-items:center;justify-content:center;color:var(--acc);font-size:22px;padding:0 6px}
+  .foot{margin-top:40px;border-top:1px solid var(--line);padding-top:14px;color:var(--mut);font-size:13px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px}
+  a{color:var(--acc)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="page">
+    <div class="crumb"><a href="index.html">Hyperion Wiki</a> › Foundation › Project Store</div>
+    <div class="kicker">Phase 0 · M1 Foundation</div>
+    <h1>The Project Store</h1>
+    <p class="lede">How Hyperion persists your work: each project is a folder with a local SQLite
+      database holding ordered <code>.bos</code> snapshots — the renderer reads the active snapshot.</p>
+    <div class="badges">
+      <span class="badge ro">Read-only toward bOS</span>
+      <span class="badge">SQLite (bundled)</span>
+      <span class="badge">Rust core · src-tauri/src/projects.rs</span>
+      <span class="badge">5 Tauri commands</span>
+    </div>
+  </header>
+
+  <h2>What it is</h2>
+  <p>Up to Phase&nbsp;0 the app rendered a single, pre-parsed configuration. The <b>project store</b>
+    turns Hyperion into a multi-project workbench: you create a project, import one or more
+    <code>.bos</code> exports into it, and each import is saved as an ordered <b>snapshot</b>. Opening a
+    project reloads its most recent (or pinned) snapshot into the Configurator view — exactly the tree,
+    grouped settings and playbook grading you already know.</p>
+
+  <div class="callout ro">
+    <b>Still strictly read-only.</b>
+    The store only ever <i>reads</i> your exported <code>.bos</code> and writes its own local copy into
+    the project database. Nothing is ever written back to a live bOS Server — the trusted model is preserved.
+  </div>
+
+  <h2>Data flow: importing a <code>.bos</code></h2>
+  <div class="flow">
+    <div class="step"><span class="t">Pick file</span><span class="s">native dialog → real path</span></div>
+    <div class="arrow">→</div>
+    <div class="step"><span class="t">Parse</span><span class="s">bos_explore.py → node array</span></div>
+    <div class="arrow">→</div>
+    <div class="step"><span class="t">Snapshot</span><span class="s">stored in project.db</span></div>
+    <div class="arrow">→</div>
+    <div class="step"><span class="t">Render</span><span class="s">active snapshot → tree</span></div>
+  </div>
+  <p class="lede" style="font-size:14px">The parser runs once per import; its JSON is captured straight into the
+    database (<code>snapshot.map_json</code>), so re-opening a project never re-parses and works offline.</p>
+
+  <h2>On-disk layout</h2>
+  <pre><span class="c"># HYPERION_PROJECTS env, else &lt;workspace&gt;/hyperion-projects/</span>
+hyperion-projects/
+└─ gb1625-building/        <span class="c"># folder = project id (slug of the name)</span>
+   ├─ project.db           <span class="c"># SQLite store (git-ignored, per-machine)</span>
+   └─ last_parse.json      <span class="c"># most recent parser output (scratch)</span></pre>
+
+  <h2>Database schema</h2>
+  <p>Phase&nbsp;0 actively uses <code>meta</code> and <code>snapshot</code>. The remaining tables are created
+    now but filled by later phases, so a project made today keeps opening as the app grows.</p>
+  <table>
+    <thead><tr><th>Table</th><th>Purpose</th><th>Phase</th></tr></thead>
+    <tbody>
+      <tr><td><code>meta</code></td><td>Key/value: <code>schema_version</code>, <code>name</code>, <code>created_at</code>, <code>active_snapshot_id</code></td><td>0 ✓</td></tr>
+      <tr><td><code>snapshot</code></td><td>Ordered parsed <code>.bos</code>: <code>label</code>, <code>bos_filename</code>, <code>node_count</code>, <code>map_json</code></td><td>0 ✓</td></tr>
+      <tr><td><code>context_file</code></td><td>Ingested PDFs / Word / datasheets for RAG</td><td>3 (M1/M7)</td></tr>
+      <tr><td><code>memory</code></td><td>Per-project agent memory + instincts</td><td>2 (M5)</td></tr>
+      <tr><td><code>wiki_page</code></td><td>Generated, editable wiki pages</td><td>4 (M4)</td></tr>
+      <tr><td><code>timeline</code></td><td>Version-control history / PR threads</td><td>5 (M8)</td></tr>
+    </tbody>
+  </table>
+
+  <details>
+    <summary>Show the snapshot table DDL</summary>
+<pre><span class="k">CREATE TABLE</span> snapshot (
+  id           <span class="k">INTEGER PRIMARY KEY AUTOINCREMENT</span>,
+  label        <span class="k">TEXT NOT NULL</span>,        <span class="c">-- user label, defaults to the filename</span>
+  bos_filename <span class="k">TEXT</span>,                 <span class="c">-- original .bos name</span>
+  created_at   <span class="k">TEXT NOT NULL</span>,        <span class="c">-- datetime('now')</span>
+  node_count   <span class="k">INTEGER NOT NULL</span>,
+  map_json     <span class="k">TEXT NOT NULL</span>          <span class="c">-- the parsed node array</span>
+);</pre>
+  </details>
+
+  <h2>Commands (Rust core → webview)</h2>
+  <table>
+    <thead><tr><th>Command</th><th>Args</th><th>Returns</th></tr></thead>
+    <tbody>
+      <tr><td><code>list_projects</code></td><td>—</td><td><code>[{id,name,created_at,snapshots,path}]</code></td></tr>
+      <tr><td><code>create_project</code></td><td><code>name</code></td><td>the new project summary</td></tr>
+      <tr><td><code>open_project</code></td><td><code>id</code></td><td>project view; loads active snapshot into the renderer</td></tr>
+      <tr><td><code>current_project</code></td><td>—</td><td>active project + its snapshots (or <code>null</code>)</td></tr>
+      <tr><td><code>import_bos</code></td><td><code>path, label?</code></td><td><code>{snapshot_id, view}</code>; parses &amp; renders</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Using it</h2>
+  <ol>
+    <li>Click <b>New</b> in the app bar and name the project (e.g. <i>GB1625 Building</i>).</li>
+    <li>The project opens automatically and <b>Import .bos…</b> becomes enabled.</li>
+    <li>Pick a <code>.bos</code> export — it is parsed, saved as a snapshot, and rendered.</li>
+    <li>Re-open any project later from the <b>Project</b> dropdown; the count in parentheses is its snapshot total.</li>
+  </ol>
+
+  <h2>Security &amp; safety notes</h2>
+  <div class="callout warn">
+    <b>Project ids are validated against path traversal.</b>
+    Folder names come from <code>slugify</code> (<code>[a-z0-9-]</code> only) and <code>open()</code> rejects any id that is
+    absolute or contains <code>/</code>, <code>\</code> or <code>..</code> — a project can never reach outside the projects root.
+  </div>
+  <ul>
+    <li><b>Local only.</b> <code>project.db</code> and the <code>hyperion-projects/</code> tree are git-ignored; they never leave the machine.</li>
+    <li><b>No silent failures.</b> Every fallible step returns a typed error surfaced to the UI; mutex poisoning is recovered rather than cascaded.</li>
+    <li><b>Forward-compatible.</b> Opening an older project self-heals missing tables without ever downgrading a newer <code>schema_version</code>.</li>
+  </ul>
+
+  <div class="foot">
+    <span>Hyperion · enterprise IoT workbench for ComfortClick bOS</span>
+    <span>Phase&nbsp;0 — Foundation · documented as built</span>
+  </div>
+
+</div>
+</body>
+</html>
