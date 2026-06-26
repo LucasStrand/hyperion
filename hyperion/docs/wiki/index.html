@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hyperion Wiki</title>
+<!-- Vault landing page for the Hyperion wiki collection (M4). Themeable via :root tokens. -->
+<style>
+  :root{
+    --bg:#f4f6f8; --pan:#ffffff; --ink:#1f2a36; --mut:#67788a; --line:#dce3ea;
+    --acc:#2b6cb0; --acc-soft:#e8f1fb; --ok:#2e9e6a; --done:#2e9e6a; --soon:#d98014;
+    --radius:10px; --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.55}
+  .wrap{max-width:960px;margin:0 auto;padding:40px 22px 80px}
+  .kicker{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--acc);font-weight:600}
+  h1{font-size:32px;margin:.18em 0 .1em}
+  .lede{font-size:17px;color:var(--mut);max-width:62ch}
+  h2{font-size:14px;letter-spacing:.06em;text-transform:uppercase;color:var(--mut);margin:34px 0 12px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px}
+  .card{display:block;text-decoration:none;color:inherit;background:var(--pan);border:1px solid var(--line);
+        border-radius:var(--radius);padding:16px 18px;transition:border-color .15s,box-shadow .15s}
+  .card:hover{border-color:var(--acc);box-shadow:0 2px 10px rgba(20,60,110,.08)}
+  .card.todo{opacity:.6;pointer-events:none}
+  .card h3{margin:0 0 4px;font-size:16px}
+  .card p{margin:0;color:var(--mut);font-size:13px}
+  .pill{display:inline-block;font-size:11px;font-weight:600;border-radius:999px;padding:2px 8px;margin-bottom:8px}
+  .pill.done{background:#eaf7f0;color:var(--done)} .pill.soon{background:#fdf3e6;color:var(--soon)}
+  .foot{margin-top:44px;border-top:1px solid var(--line);padding-top:14px;color:var(--mut);font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="kicker">Hyperion · enterprise IoT workbench for ComfortClick bOS</div>
+  <h1>Project Wiki</h1>
+  <p class="lede">The living documentation vault. Every noteworthy feature is documented here as it is
+    built — pedagogical, artifact-driven, and themeable. This collection grows phase by phase.</p>
+
+  <h2>Foundation — Phase 0</h2>
+  <div class="grid">
+    <a class="card" href="project-store.html">
+      <span class="pill done">Built</span>
+      <h3>The Project Store</h3>
+      <p>Per-project SQLite store, ordered <code>.bos</code> snapshots, open/save, import a config.</p>
+    </a>
+    <span class="card todo">
+      <span class="pill soon">Documented as built</span>
+      <h3>Configurator View</h3>
+      <p>The read-only bOS Configurator clone — tree, grouped settings, playbook grading.</p>
+    </span>
+  </div>
+
+  <h2>Coming next</h2>
+  <div class="grid">
+    <span class="card todo"><span class="pill soon">Phase 1</span><h3>Vault &amp; Entra SSO</h3><p>Encrypted secrets unlocked by Microsoft sign-in.</p></span>
+    <span class="card todo"><span class="pill soon">Phase 2</span><h3>The Agent</h3><p>Runtime adapter, RAG, playbook emission, memory + instincts.</p></span>
+    <span class="card todo"><span class="pill soon">Phase 4</span><h3>Theming</h3><p>Token-based themes &amp; static-site export of this vault.</p></span>
+  </div>
+
+  <div class="foot">Documented as built · all dates absolute · part of the main wiki collection.</div>
+</div>
+</body>
+</html>
