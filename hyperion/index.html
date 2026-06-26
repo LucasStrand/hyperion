@@ -152,6 +152,30 @@ display:flex;align-items:center;gap:6px}
 .vscan textarea{width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:4px;font-family:Consolas,ui-monospace,monospace;font-size:12px;margin:4px 0}
 .vscan .hit{color:#b3261e;font-weight:600}
 .vscan .clean{color:#1a7f37;font-weight:600}
+/* agent chat dock (Phase 2, M2/M9) */
+.adock{position:fixed;top:0;right:0;width:440px;max-width:92vw;height:100vh;background:#fff;
+border-left:1px solid var(--line);box-shadow:-8px 0 30px rgba(0,0,0,.16);display:none;flex-direction:column;z-index:45}
+.adock.on{display:flex}
+.ah{background:#2b3a4a;color:#dfe8f1;padding:8px 12px;font-weight:600;display:flex;align-items:center;gap:8px}
+.ah .x{margin-left:auto;cursor:pointer}
+.abadge{font-size:10px;font-weight:700;padding:1px 8px;border-radius:10px;background:#cfe2fb;color:#10243b}
+.abadge.off{background:#ffe3df;color:#b3261e}
+.amsgs{flex:1;overflow:auto;padding:10px 12px;display:flex;flex-direction:column;gap:8px;background:#f7f9fb}
+.amsg{padding:8px 10px;border-radius:8px;max-width:94%;font-size:12.5px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}
+.amsg.user{align-self:flex-end;background:#cfe2fb;color:#10243b}
+.amsg.bot{align-self:flex-start;background:#fff;border:1px solid var(--line)}
+.amsg.err{align-self:flex-start;background:#ffe3df;border:1px solid #f3b4ad;color:#8a1c12}
+.amsg.note{align-self:center;background:transparent;color:var(--mut);font-size:11px;font-style:italic}
+.amsg .who{font-size:10px;font-weight:700;opacity:.55;margin-bottom:3px;text-transform:uppercase;letter-spacing:.04em}
+.amsg pre{background:#0d1b2a;color:#dbe7f3;padding:8px 10px;border-radius:6px;overflow:auto;font-family:Consolas,ui-monospace,monospace;font-size:11.5px;margin:6px 0;white-space:pre}
+.amsg pre.pb{border:1px solid #e8a33d}
+.amsg .pbtag{display:inline-block;font-size:10px;font-weight:700;color:#9a6700;background:#fff5e0;border:1px solid #f0d28a;border-radius:8px;padding:0 7px;margin:6px 0 0}
+.afoot{border-top:1px solid var(--line);padding:8px;display:flex;flex-direction:column;gap:6px;background:#fff}
+.afoot textarea{width:100%;resize:vertical;min-height:56px;padding:6px 8px;border:1px solid var(--line);border-radius:6px;font:inherit}
+.arow{display:flex;align-items:center;gap:8px}
+.afocuslbl{font-size:11px;color:#555;display:flex;align-items:center;gap:4px;cursor:pointer}
+.asend{margin-left:auto;font-size:12px;padding:5px 16px;border:1px solid var(--acc);background:var(--acc);color:#fff;border-radius:6px;cursor:pointer}
+.asend:disabled{opacity:.5;cursor:default}
 </style>
 <script type="module" src="/src/main.ts"></script>
 </head>
@@ -169,6 +193,7 @@ display:flex;align-items:center;gap:6px}
   <label class="mut" style="font-size:12px">Guide:
     <select id="pbsel"><option value="">- none -</option></select>
   </label>
+  <button id="agentbtn" class="appbtn" title="Ask the bOS Co-pilot">&#128172; Agent</button>
   <button id="vaultbtn" class="appbtn" title="Encrypted secrets vault">&#128274; Vault</button>
   <span class="ham">&#9776;</span>
 </div>
@@ -222,6 +247,20 @@ display:flex;align-items:center;gap:6px}
         <button id="vscanbtn" class="appbtn">Scan for secrets</button>
         <div id="vscanout" class="mut" style="margin-top:6px"></div>
       </div>
+    </div>
+  </div>
+</div>
+
+<div id="agent" class="adock">
+  <div class="ah">&#128172; bOS Co-pilot
+    <span id="aruntime" class="abadge off">no runtime</span>
+    <span class="x" onclick="closeAgent()">&#10005;</span></div>
+  <div id="amsgs" class="amsgs"></div>
+  <div class="afoot">
+    <textarea id="aq" placeholder="Ask how to implement something in ComfortClick&hellip;  (Ctrl+Enter to send)"></textarea>
+    <div class="arow">
+      <label class="afocuslbl"><input type="checkbox" id="afocus" checked> use selected node as context</label>
+      <button id="asend" class="asend">Ask</button>
     </div>
   </div>
 </div>

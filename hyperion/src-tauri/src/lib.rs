@@ -8,6 +8,7 @@
 //
 // Strictly read-only with respect to the bOS system — never writes to it.
 
+mod agent;
 mod entra;
 mod projects;
 mod vault;
@@ -248,16 +249,19 @@ fn get_tree(state: State<'_, Mutex<Store>>) -> Value {
     state.lock().unwrap_or_else(|e| e.into_inner()).tree.clone()
 }
 
+/// Resolve a node by path, accepting `/` or `\` separators and case-insensitive
+/// matches. Shared by the `get_node` command and the agent grounding builder.
+fn lookup_node<'a>(s: &'a Store, path: &str) -> Option<&'a Value> {
+    let key_bs = path.replace('/', "\\");
+    s.by_path
+        .get(&key_bs)
+        .or_else(|| s.norm_index.get(&norm(path)).and_then(|p| s.by_path.get(p)))
+}
+
 #[tauri::command]
 fn get_node(path: String, state: State<'_, Mutex<Store>>) -> Result<Value, String> {
     let s = state.lock().unwrap_or_else(|e| e.into_inner());
-    let key_bs = path.replace('/', "\\");
-    let n = s.by_path.get(&key_bs).or_else(|| {
-        s.norm_index
-            .get(&norm(&path))
-            .and_then(|p| s.by_path.get(p))
-    });
-    let n = match n {
+    let n = match lookup_node(&s, &path) {
         Some(n) => n,
         None => return Err(format!("node not found: {path}")),
     };
@@ -596,6 +600,253 @@ fn entra_sign_out(auth: State<'_, Mutex<Auth>>, vault: State<'_, Mutex<Vault>>) 
     a.status()
 }
 
+// ----------------------------- agent commands -----------------------------
+
+/// Snapshot of which runtimes can serve a request right now.
+struct RuntimeAvailability {
+    claude: bool,
+    codex: bool,
+    openrouter_key: bool,
+}
+
+/// Is an OpenRouter key reachable — from the environment, or from the vault if
+/// it is already unlocked (never forces an unlock)?
+fn openrouter_key_present(vault: &State<'_, Mutex<Vault>>) -> bool {
+    if std::env::var("OPENROUTER_API_KEY")
+        .map(|k| !k.trim().is_empty())
+        .unwrap_or(false)
+    {
+        return true;
+    }
+    let v = vault.lock().unwrap_or_else(|e| e.into_inner());
+    v.is_unlocked()
+        && v.names()
+            .map(|names| names.iter().any(|n| n == "openrouter_api_key"))
+            .unwrap_or(false)
+}
+
+/// Resolve the actual OpenRouter key: env first, else the unlocked vault. Always
+/// trimmed — a trailing newline (common from `export KEY=$(cat …)` or a paste)
+/// would otherwise produce `Bearer …\n` and an opaque 401.
+fn resolve_openrouter_key(vault: &State<'_, Mutex<Vault>>) -> Option<String> {
+    if let Ok(k) = std::env::var("OPENROUTER_API_KEY") {
+        let k = k.trim();
+        if !k.is_empty() {
+            return Some(k.to_string());
+        }
+    }
+    let v = vault.lock().unwrap_or_else(|e| e.into_inner());
+    if v.is_unlocked() {
+        if let Ok(val) = v.reveal("openrouter_api_key") {
+            let val = val.trim();
+            if !val.is_empty() {
+                return Some(val.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn availability(vault: &State<'_, Mutex<Vault>>) -> RuntimeAvailability {
+    RuntimeAvailability {
+        claude: agent::claude_path().is_some(),
+        codex: agent::codex_path().is_some(),
+        openrouter_key: openrouter_key_present(vault),
+    }
+}
+
+/// Pick the active runtime: an explicit, *available* override
+/// (`HYPERION_AGENT_RUNTIME`) wins; otherwise the first available in the
+/// preference order Claude Code → Codex → OpenRouter (local first).
+fn active_runtime(a: &RuntimeAvailability) -> Option<agent::Runtime> {
+    let avail = |r: agent::Runtime| match r {
+        agent::Runtime::ClaudeCode => a.claude,
+        agent::Runtime::Codex => a.codex,
+        agent::Runtime::OpenRouter => a.openrouter_key,
+    };
+    if let Ok(ov) = std::env::var("HYPERION_AGENT_RUNTIME") {
+        if let Some(r) = agent::Runtime::parse(&ov) {
+            if avail(r) {
+                return Some(r);
+            }
+        }
+    }
+    [
+        agent::Runtime::ClaudeCode,
+        agent::Runtime::Codex,
+        agent::Runtime::OpenRouter,
+    ]
+    .into_iter()
+    .find(|&r| avail(r))
+}
+
+/// Agent runtime status for the UI: which backends are present and which is active.
+#[tauri::command]
+fn agent_status(vault: State<'_, Mutex<Vault>>) -> Value {
+    let a = availability(&vault);
+    let active = active_runtime(&a);
+    json!({
+        "runtimes": [
+            { "kind": "claude",     "label": "Claude Code", "available": a.claude },
+            { "kind": "codex",      "label": "Codex",       "available": a.codex },
+            { "kind": "openrouter", "label": "OpenRouter",  "available": a.openrouter_key },
+        ],
+        "active": active.map(|r| r.label()),
+        "any": active.is_some(),
+    })
+}
+
+/// Build a compact, token-bounded grounding block from the loaded `.bos` for the
+/// agent's system prompt. Phase 2 grounds on the live tree (+ the focused node);
+/// Phase 3 will prepend retrieved context chunks here. Never reads the vault.
+fn build_grounding(s: &Store, focus: Option<&str>) -> String {
+    let mut out = String::new();
+    out.push_str(&format!(
+        "Loaded .bos config: {} ({} objects).\n",
+        s.config_name,
+        s.nodes.len()
+    ));
+    if s.nodes.is_empty() {
+        out.push_str(
+            "No configuration is loaded yet — tell the user to open a project and import a .bos.\n",
+        );
+        return out;
+    }
+
+    // Top-level sections (depth-1 children of root) with child counts.
+    if let Some(kids) = s.tree.get("children").and_then(|v| v.as_array()) {
+        out.push_str("Top-level sections (name × direct children):\n");
+        for (i, k) in kids.iter().enumerate() {
+            if i >= 40 {
+                out.push_str(&format!("  …and {} more.\n", kids.len() - 40));
+                break;
+            }
+            let name = k.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+            let n = k
+                .get("children")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            out.push_str(&format!("  - {name} ({n})\n"));
+        }
+    }
+
+    // Distinct object types present, with frequency.
+    let mut types: BTreeMap<String, usize> = BTreeMap::new();
+    for n in &s.nodes {
+        if let Some(t) = n.get("type").and_then(|v| v.as_str()) {
+            *types.entry(t.to_string()).or_default() += 1;
+        }
+    }
+    if !types.is_empty() {
+        let parts: Vec<String> = types.iter().map(|(t, c)| format!("{t}×{c}")).collect();
+        let shown = parts.len().min(30);
+        out.push_str("Object types present: ");
+        out.push_str(&parts[..shown].join(", "));
+        if parts.len() > shown {
+            out.push_str(&format!(", …{} more", parts.len() - shown));
+        }
+        out.push('\n');
+    }
+
+    // The node the user is currently looking at, if any.
+    if let Some(fp) = focus.map(str::trim).filter(|s| !s.is_empty()) {
+        if let Some(n) = lookup_node(s, fp) {
+            out.push_str("\nCurrently selected node (the user is looking at this):\n");
+            out.push_str(&node_brief(s, n));
+        }
+    }
+
+    // Hard cap so a huge config can't blow up the prompt.
+    const MAX: usize = 6000;
+    if out.chars().count() > MAX {
+        out = out.chars().take(MAX).collect::<String>() + "\n…(grounding truncated)\n";
+    }
+    out
+}
+
+/// One-node summary for grounding: path, type, write targets, fan-in/out counts.
+fn node_brief(s: &Store, n: &Value) -> String {
+    let key = node_path(n);
+    let mut b = String::new();
+    b.push_str(&format!("  path: {key}\n"));
+    if let Some(t) = n.get("type").and_then(|v| v.as_str()) {
+        b.push_str(&format!("  type: {t}\n"));
+    }
+    if let Some(w) = n.get("writes").and_then(|v| v.as_array()) {
+        let targets: Vec<String> = w
+            .iter()
+            .filter_map(|r| r.get("object").and_then(|v| v.as_str()))
+            .take(10)
+            .map(|x| x.to_string())
+            .collect();
+        if !targets.is_empty() {
+            b.push_str(&format!("  writes to: {}\n", targets.join(", ")));
+        }
+    }
+    let refs = s.ref_index.get(&key).map(|v| v.len()).unwrap_or(0);
+    let kids = s.children_index.get(&key).map(|v| v.len()).unwrap_or(0);
+    b.push_str(&format!("  referenced by: {refs}; consists of: {kids}\n"));
+    b
+}
+
+/// Ask the active agent runtime a grounded question. Holds no lock across the
+/// (slow, blocking) model call: grounding is built and any key resolved up
+/// front, then the locks are released before `agent::ask`.
+#[tauri::command]
+async fn agent_ask(
+    question: String,
+    focus_path: Option<String>,
+    store: State<'_, Mutex<Store>>,
+    vault: State<'_, Mutex<Vault>>,
+) -> Result<Value, String> {
+    let question = question.trim().to_string();
+    if question.is_empty() {
+        return Err("ask a question first".into());
+    }
+    if question.chars().count() > 8000 {
+        return Err("question is too long (max 8000 characters)".into());
+    }
+
+    // All state access happens up front (no MutexGuard is held across an await).
+    let avail = availability(&vault);
+    let runtime = active_runtime(&avail).ok_or(
+        "no agent runtime available — install Claude Code or Codex, or set OPENROUTER_API_KEY",
+    )?;
+
+    // Build grounding, then drop the store lock before the model call. The
+    // grounding is .bos-derived (untrusted) data, fenced so the model treats it
+    // as data, not instructions (paired with the INSTINCTS note).
+    let grounding = {
+        let s = store.lock().unwrap_or_else(|e| e.into_inner());
+        build_grounding(&s, focus_path.as_deref())
+    };
+    let system = format!(
+        "{}\n\n# Loaded system context (untrusted data)\n<bos-data>\n{}\n</bos-data>",
+        agent::INSTINCTS,
+        grounding
+    );
+
+    // Resolve the key (briefly locking the vault) only for the cloud path.
+    let key = if runtime == agent::Runtime::OpenRouter {
+        resolve_openrouter_key(&vault)
+    } else {
+        None
+    };
+    let model = std::env::var("HYPERION_OPENROUTER_MODEL")
+        .unwrap_or_else(|_| agent::DEFAULT_OPENROUTER_MODEL.to_string());
+
+    // Run the blocking round-trip (subprocess or HTTP, up to 180s) off the UI
+    // thread so a slow/hung runtime never freezes the Tauri event loop.
+    let answer = tauri::async_runtime::spawn_blocking(move || {
+        agent::ask(runtime, &system, &question, key.as_deref(), &model)
+    })
+    .await
+    .map_err(|e| format!("agent task failed: {e}"))??;
+
+    Ok(json!({ "runtime": runtime.label(), "answer": answer }))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let workspace = default_workspace();
@@ -632,7 +883,9 @@ pub fn run() {
             scan_secret,
             entra_status,
             entra_sign_in,
-            entra_sign_out
+            entra_sign_out,
+            agent_status,
+            agent_ask
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
