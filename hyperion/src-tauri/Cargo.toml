@@ -33,4 +33,10 @@ keyring = { version = "3", features = ["windows-native"] }
 rand = "0.8"
 base64 = "0.22"
 zeroize = { version = "1", features = ["derive"] }
+# Microsoft Entra SSO (Phase 1 step 2): OAuth 2.0 auth-code + PKCE. `ureq` is a
+# small blocking HTTPS client (rustls) for the token exchange; `sha2` computes
+# the PKCE S256 challenge; `urlencoding` builds the authorize URL safely.
+ureq = "2"
+sha2 = "0.10"
+urlencoding = "2"
 
