@@ -1,0 +1,106 @@
+{
+  "feature": "Replace TEST TAKSTATUS mock with real 84000 Status drift",
+  "summary": "TAKSTATUS is a COMPUTED status: the 'Uppstart/Avstängning 84000-CM1' program decides from the valve gates whether the roof pump should run (OR = any valve open -> on; all off -> off). Today it writes that result to a MOCK boolean, Tasks\\Kylvatten anläggning tak 84000-CM1\\TEST TAKSTATUS. Repoint it to the real point, Devices\\Lora-Modbus\\Slave\\84000 Status drift, so the computed status drives the actual signal - and point the Takstatus dashboard tile at the same real object, then delete the mock. Each step is checked against your .bos and badged; status reflects the exported snapshot, so re-export and reload after editing in the Configurator. Diffs are previews only; NOTHING is written to bOS.",
+  "config": "GB1625-Building.bos",
+  "steps": [
+    {
+      "n": 1,
+      "title": "Confirm the real target exists",
+      "action": "navigate",
+      "target": "Devices\\Lora-Modbus\\Slave\\84000 Status drift",
+      "detail": "This is the real roof-pump status point on the LoRa-Modbus slave (DPTBoolean, Address 7). The program will WRITE the computed status here instead of to the mock. Heads-up: this DPT has ReadCyclically = true - if the slave does not echo back exactly what you write, the cyclic poll can overwrite your computed value. If 84000 Status drift is purely the point you drive (not a register the device reports independently), uncheck ReadCyclically so the poll doesn't fight the SetValue.",
+      "check": {
+        "node": "Devices\\Lora-Modbus\\Slave\\84000 Status drift",
+        "all": [
+          {"exists": true, "label": "84000 Status drift exists"}
+        ]
+      },
+      "highlight": {
+        "kind": "setting",
+        "node": "Devices\\Lora-Modbus\\Slave\\84000 Status drift",
+        "field": "ReadCyclically",
+        "warn": "Modbus Table = Inputs -> read-only; a SetValue here won't reach the device. Confirm this point is writable before relying on it."
+      }
+    },
+    {
+      "n": 2,
+      "title": "Retarget the program's writes to the real point",
+      "action": "set",
+      "target": "Tasks\\Kylvatten anläggning tak 84000-CM1\\Uppstart/Avstängning 84000-CM1",
+      "detail": "Open this Program. In its Commands, change both SetValue targets from 'Tasks\\Kylvatten anläggning tak 84000-CM1\\TEST TAKSTATUS' to 'Devices\\Lora-Modbus\\Slave\\84000 Status drift' (keep the values: True under OR gate = True, False under AND gate = False). The conditions stay as-is; only the object being written changes. NOTE: the off-branch keys off AND gate = False ('not all valves on'), not OR gate = False ('all valves off'), which contradicts the 'on while ANY valve open' rule. Now that it drives the real pump, fix that branch to OR gate = False (or drop it) so the pump isn't forced off whenever just one valve is closed.",
+      "check": {
+        "node": "Tasks\\Kylvatten anläggning tak 84000-CM1\\Uppstart/Avstängning 84000-CM1",
+        "all": [
+          {"writes": "84000 Status drift", "label": "program writes 84000 Status drift"},
+          {"command": "84000 Status drift.Value = True", "under": "OR Ventiler PÅ status.Value = True", "label": "84000 Status drift = True under OR gate = True"},
+          {"command": "84000 Status drift.Value = False", "label": "84000 Status drift = False branch present"}
+        ]
+      },
+      "diff": {
+        "node": "Tasks\\Kylvatten anläggning tak 84000-CM1\\Uppstart/Avstängning 84000-CM1",
+        "section": "commands",
+        "before": [
+          {"cmd": "If", "text": "If ...AND Ventiler PÅ status.Value = False", "children": [
+            {"cmd": "SetValue", "text": "...TEST TAKSTATUS.Value = False", "removed": true}
+          ]},
+          {"cmd": "If", "text": "If ...OR Ventiler PÅ status.Value = True", "children": [
+            {"cmd": "SetValue", "text": "...TEST TAKSTATUS.Value = True", "removed": true}
+          ]}
+        ],
+        "after": [
+          {"cmd": "If", "text": "If ...AND Ventiler PÅ status.Value = False", "children": [
+            {"cmd": "SetValue", "text": "Devices\\Lora-Modbus\\Slave\\84000 Status drift.Value = False", "added": true}
+          ]},
+          {"cmd": "If", "text": "If ...OR Ventiler PÅ status.Value = True", "children": [
+            {"cmd": "SetValue", "text": "Devices\\Lora-Modbus\\Slave\\84000 Status drift.Value = True", "added": true}
+          ]}
+        ]
+      },
+      "highlight": [
+        {"kind": "command", "node": "Tasks\\Kylvatten anläggning tak 84000-CM1\\Uppstart/Avstängning 84000-CM1", "field": "TEST TAKSTATUS.Value = True", "before": "TEST TAKSTATUS", "after": "84000 Status drift"},
+        {"kind": "command", "node": "Tasks\\Kylvatten anläggning tak 84000-CM1\\Uppstart/Avstängning 84000-CM1", "field": "TEST TAKSTATUS.Value = False", "before": "TEST TAKSTATUS", "after": "84000 Status drift"}
+      ]
+    },
+    {
+      "n": 3,
+      "title": "Repoint the Takstatus dashboard tile",
+      "action": "set",
+      "target": "Themes\\Thule\\Inject visual\\Inject visual\\Takstatus",
+      "detail": "This tile is the only other consumer of the mock. Change its bound object from 'Tasks\\Kylvatten anläggning tak 84000-CM1\\TEST TAKSTATUS.Value' to 'Devices\\Lora-Modbus\\Slave\\84000 Status drift.Value' so it shows the same real status the program now drives.",
+      "check": {
+        "node": "Devices\\Lora-Modbus\\Slave\\84000 Status drift",
+        "all": [
+          {"referencedBy": "Takstatus", "label": "Takstatus tile now binds to 84000 Status drift"}
+        ]
+      },
+      "highlight": {
+        "kind": "binding",
+        "node": "Themes\\Thule\\Inject visual\\Inject visual\\Takstatus",
+        "field": "TEST TAKSTATUS",
+        "before": "TEST TAKSTATUS",
+        "after": "84000 Status drift"
+      }
+    },
+    {
+      "n": 4,
+      "title": "Delete the orphaned TEST TAKSTATUS node",
+      "action": "navigate",
+      "target": "Tasks\\Kylvatten anläggning tak 84000-CM1\\TEST TAKSTATUS",
+      "detail": "Once the program writes (step 2) and the tile (step 3) point at 84000 Status drift, nothing references TEST TAKSTATUS. Confirm its Usages tab is empty, then delete the Variable.Boolean node so the mock is fully removed. If Usages still lists anything, finish that reference first - don't delete a node that is still bound."
+    },
+    {
+      "n": 5,
+      "title": "Re-export and reload to re-grade",
+      "action": "navigate",
+      "target": "Devices\\Lora-Modbus\\Slave\\84000 Status drift",
+      "detail": "Export the updated GB1625-Building.bos from the Configurator and reload it in the Co-pilot. Steps 1-3 should badge green; the mock node should be gone from the tree. Then live-test: open one machine valve and confirm 84000 Status drift goes True and the Takstatus tile follows; close the last valve and confirm it goes False.",
+      "check": {
+        "node": "Devices\\Lora-Modbus\\Slave\\84000 Status drift",
+        "all": [
+          {"referencedBy": "Uppstart", "label": "program drives 84000 Status drift"},
+          {"referencedBy": "Takstatus", "label": "tile reads 84000 Status drift"}
+        ]
+      }
+    }
+  ]
+}

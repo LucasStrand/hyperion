@@ -1,0 +1,181 @@
+{
+  "feature": "Stoppa takpump vid läckage",
+  "summary": "If any läckagematta detects a leak, stop the roof cooling pump (Kylvatten anläggning tak 84000-CM1). All five mats (L Sens 1.1-1.5 läckagematta) are already aggregated into ONE boolean: Tasks\\Läckage mattor Injeckthall\\Läckage utlöst. The pump is stopped by Devices\\Lora-Modbus\\Slave\\84000 Spärra = True (same action the existing 'Avstängning/Start av Kylvatten anläggning' program uses). Each step is CHECKED against your .bos and badged Implemented / Partial / To-do - so confirm steps already in place show green, and only the real work shows as to-do. Status reflects the exported .bos snapshot; after you make changes in the Configurator, re-export and reload to refresh. Diffs and checks are previews only; NOTHING is written to bOS.",
+  "config": {
+    "new_program": "Tasks\\Kylvatten anläggning tak 84000-CM1\\Stopp takpump vid läckage",
+    "leak_flag": "Tasks\\Läckage mattor Injeckthall\\Läckage utlöst",
+    "leak_reset": "Tasks\\Läckage mattor Injeckthall\\Läckage återställt",
+    "roof_block": "Devices\\Lora-Modbus\\Slave\\84000 Spärra"
+  },
+  "steps": [
+    {
+      "n": 1,
+      "title": "Confirm the leak aggregate flag",
+      "action": "navigate",
+      "target": "Tasks\\Läckage mattor Injeckthall\\Läckage utlöst",
+      "detail": "This boolean is set True by the existing 'Läckage detecktering' / 'Villkor läckage' logic whenever ANY of L Sens 1.1-1.5 läckagematta reports a leak. We trigger off this single flag instead of OR-ing the five mats ourselves.",
+      "verify": "Type is Variable.Boolean and 'Referenced by' shows the Läckage detektering / Villkor läckage writers.",
+      "check": {
+        "node": "Tasks\\Läckage mattor Injeckthall\\Läckage utlöst",
+        "all": [
+          {"exists": true, "label": "Läckage utlöst flag exists"},
+          {"referencedBy": "Läckage", "label": "written by leak-detection logic"}
+        ]
+      }
+    },
+    {
+      "n": 2,
+      "title": "Confirm how the roof pump is stopped",
+      "action": "navigate",
+      "target": "Devices\\Lora-Modbus\\Slave\\84000 Spärra",
+      "detail": "Spärra = plant block/disable. Setting it True blocks (stops) the 84000 roof cooling plant. The 'Avstängning/Start av Kylvatten anläggning' program already does '84000 Spärra.Value = True' to stop the plant - we reuse that exact action.",
+      "verify": "84000 Spärra is referenced by 'Avstängning/Start av Kylvatten anläggning' (writes).",
+      "check": {
+        "node": "Devices\\Lora-Modbus\\Slave\\84000 Spärra",
+        "all": [
+          {"exists": true, "label": "84000 Spärra exists"},
+          {"referencedBy": "Avstängning/Start av Kylvatten", "label": "used by roof program to stop plant"}
+        ]
+      }
+    },
+    {
+      "n": 3,
+      "title": "Create a new Program for the leak interlock",
+      "action": "add",
+      "target": "Tasks\\Kylvatten anläggning tak 84000-CM1",
+      "detail": "In the roof-cooling folder, right-click > Add > Program. Name it 'Stopp takpump vid läckage'.",
+      "verify": "New Program 'Stopp takpump vid läckage' appears under Kylvatten anläggning tak 84000-CM1.",
+      "check": {
+        "node": "Tasks\\Kylvatten anläggning tak 84000-CM1\\Stopp takpump vid läckage",
+        "all": [
+          {"exists": true, "label": "Program 'Stopp takpump vid läckage' exists"}
+        ]
+      }
+    },
+    {
+      "n": 4,
+      "title": "Add the trigger: leak flag changes",
+      "action": "set",
+      "target": "Tasks\\Läckage mattor Injeckthall\\Läckage utlöst",
+      "detail": "In the new Program's Triggers pane: Add a trigger on 'Läckage utlöst', condition OnChange.",
+      "verify": "Triggers shows: Läckage utlöst.Value OnChange",
+      "check": {
+        "node": "Tasks\\Kylvatten anläggning tak 84000-CM1\\Stopp takpump vid läckage",
+        "all": [
+          {"exists": true, "label": "Program exists"},
+          {"trigger": "Läckage utlöst", "label": "trigger on Läckage utlöst"}
+        ]
+      },
+      "diff": {
+        "node": "Tasks\\Kylvatten anläggning tak 84000-CM1\\Stopp takpump vid läckage",
+        "section": "triggers",
+        "before": [],
+        "after": [
+          {"cmd": "IfTrigger", "text": "Tasks\\Läckage mattor Injeckthall\\Läckage utlöst.Value OnChange", "added": true}
+        ]
+      }
+    },
+    {
+      "n": 5,
+      "title": "Add command: If a leak is active",
+      "action": "add",
+      "target": "Tasks\\Läckage mattor Injeckthall\\Läckage utlöst",
+      "detail": "In Commands: Add > If. Reference = Läckage utlöst, condition '=', Value = True.",
+      "verify": "Command tree shows 'If ...Läckage utlöst.Value = True'.",
+      "check": {
+        "node": "Tasks\\Kylvatten anläggning tak 84000-CM1\\Stopp takpump vid läckage",
+        "all": [
+          {"command": "Läckage utlöst.Value = True", "label": "If Läckage utlöst = True present"}
+        ]
+      },
+      "diff": {
+        "node": "Tasks\\Kylvatten anläggning tak 84000-CM1\\Stopp takpump vid läckage",
+        "section": "commands",
+        "before": [],
+        "after": [
+          {"cmd": "If", "text": "If Tasks\\Läckage mattor Injeckthall\\Läckage utlöst.Value = True", "added": true, "children": []}
+        ]
+      }
+    },
+    {
+      "n": 6,
+      "title": "Inside the If: stop the roof pump",
+      "action": "set",
+      "target": "Devices\\Lora-Modbus\\Slave\\84000 Spärra",
+      "detail": "Under that If, Add > Set Value. Reference = 84000 Spärra, Value = True. This blocks the plant = pump stops.",
+      "verify": "Under the If you see '84000 Spärra.Value = True'.",
+      "check": {
+        "node": "Tasks\\Kylvatten anläggning tak 84000-CM1\\Stopp takpump vid läckage",
+        "all": [
+          {"command": "84000 Spärra.Value = True", "under": "Läckage utlöst.Value = True", "label": "84000 Spärra = True under the leak If"}
+        ]
+      },
+      "diff": {
+        "node": "Tasks\\Kylvatten anläggning tak 84000-CM1\\Stopp takpump vid läckage",
+        "section": "commands",
+        "before": [
+          {"cmd": "If", "text": "If Tasks\\Läckage mattor Injeckthall\\Läckage utlöst.Value = True", "children": []}
+        ],
+        "after": [
+          {"cmd": "If", "text": "If Tasks\\Läckage mattor Injeckthall\\Läckage utlöst.Value = True", "children": [
+            {"cmd": "SetValue", "text": "Devices\\Lora-Modbus\\Slave\\84000 Spärra.Value = True", "added": true}
+          ]}
+        ]
+      }
+    },
+    {
+      "n": 7,
+      "title": "Harden the block against override (recommended)",
+      "action": "navigate",
+      "target": "Tasks\\Kylvatten anläggning tak 84000-CM1\\Avstängning/Start av Kylvatten anläggning",
+      "detail": "This existing program ALSO writes 84000 Spärra on valve changes (If Ventil Tillopp PÅ status = True -> Spärra True; = False -> Spärra False), so a leak block could be cleared next time a valve toggles. Prepend a guard at the top of its Commands so the leak always wins.",
+      "verify": "First command re-asserts 84000 Spärra = True while Läckage utlöst is True.",
+      "check": {
+        "node": "Tasks\\Kylvatten anläggning tak 84000-CM1\\Avstängning/Start av Kylvatten anläggning",
+        "all": [
+          {"exists": true, "label": "roof start/stop program exists"},
+          {"command": "Läckage utlöst", "label": "leak guard added to this program"}
+        ]
+      },
+      "diff": {
+        "node": "Tasks\\Kylvatten anläggning tak 84000-CM1\\Avstängning/Start av Kylvatten anläggning",
+        "section": "commands",
+        "before": [
+          {"cmd": "If", "text": "If ...Msk. 84002B Ventil Tillopp PÅ status.Value = True", "children": [
+            {"cmd": "SetValue", "text": "Devices\\Lora-Modbus\\Slave\\84000 Spärra.Value = True"}
+          ]},
+          {"cmd": "If", "text": "If ...Msk. 84002B Ventil Tillopp PÅ status.Value = False", "children": [
+            {"cmd": "SetValue", "text": "Devices\\Lora-Modbus\\Slave\\84000 Spärra.Value = False"}
+          ]}
+        ],
+        "after": [
+          {"cmd": "If", "added": true, "text": "If Tasks\\Läckage mattor Injeckthall\\Läckage utlöst.Value = True", "children": [
+            {"cmd": "SetValue", "added": true, "text": "Devices\\Lora-Modbus\\Slave\\84000 Spärra.Value = True"}
+          ]},
+          {"cmd": "If", "text": "If ...Msk. 84002B Ventil Tillopp PÅ status.Value = True", "children": [
+            {"cmd": "SetValue", "text": "Devices\\Lora-Modbus\\Slave\\84000 Spärra.Value = True"}
+          ]},
+          {"cmd": "If", "text": "If ...Msk. 84002B Ventil Tillopp PÅ status.Value = False", "children": [
+            {"cmd": "SetValue", "text": "Devices\\Lora-Modbus\\Slave\\84000 Spärra.Value = False"}
+          ]}
+        ]
+      }
+    },
+    {
+      "n": 8,
+      "title": "Optional: auto-resume when leak is cleared",
+      "action": "set",
+      "target": "Tasks\\Läckage mattor Injeckthall\\Läckage återställt",
+      "detail": "If you want auto-resume: do NOT force 84000 Spärra False on Läckage utlöst = False (could start the pump into a hazard). Prefer requiring 'Läckage återställt' (manual reset) before unblocking.",
+      "verify": "On Läckage utlöst going False, the normal roof program regains control; pump only restarts after Läckage återställt."
+    },
+    {
+      "n": 9,
+      "title": "Test the interlock",
+      "action": "navigate",
+      "target": "Devices\\Lora-Modbus\\Slave\\L Sens 1.1 läckagematta",
+      "detail": "Observe one mat reporting a leak so Läckage utlöst becomes True, then watch 84000 Spärra flip to True and the roof pump stop. Repeat for another mat to confirm 'any mat' coverage.",
+      "verify": "Any mat -> Läckage utlöst True -> 84000 Spärra True -> takpump stopped; stays stopped until reset."
+    }
+  ]
+}

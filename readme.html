@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>bOS Co-pilot - guide</title>
+<style>
+:root{--bg:#0f1419;--pan:#161c24;--pan2:#1d2530;--line:#2b3543;--tx:#d7e0ea;
+--mut:#8a98a8;--acc:#4ea1ff;--ok:#3ecf8e;--warn:#ffb454;--red:#ff6b61;}
+*{box-sizing:border-box}
+body{margin:0;font:15px/1.65 "Segoe UI",system-ui,sans-serif;background:var(--bg);
+color:var(--tx);padding:0 0 80px}
+.wrap{max-width:860px;margin:0 auto;padding:0 22px}
+header{background:linear-gradient(180deg,#1b2530,#0f1419);border-bottom:1px solid var(--line);
+padding:34px 0 26px;margin-bottom:8px}
+header .wrap{display:flex;flex-direction:column;gap:6px}
+h1{margin:0;font-size:30px} h1 b{color:var(--acc)}
+.sub{color:var(--mut);font-size:15px}
+.pill{display:inline-block;background:var(--pan2);border:1px solid var(--line);color:var(--ok);
+border-radius:20px;padding:2px 12px;font-size:12.5px;margin-top:8px;width:max-content}
+h2{margin:34px 0 10px;font-size:21px;border-bottom:1px solid var(--line);padding-bottom:6px}
+h2 .n{color:var(--acc);font-weight:700;margin-right:8px}
+h3{margin:22px 0 6px;font-size:16.5px;color:var(--acc)}
+p{margin:10px 0} ul,ol{margin:10px 0;padding-left:24px} li{margin:5px 0}
+code{background:#0a0d11;border:1px solid var(--line);border-radius:4px;padding:1px 6px;
+font:13px/1.4 "Cascadia Code",Consolas,monospace;color:var(--ok)}
+pre{background:#0a0d11;border:1px solid var(--line);border-radius:8px;padding:14px 16px;
+overflow:auto;margin:12px 0} pre code{border:none;padding:0;background:none;color:var(--tx)}
+.card{background:var(--pan);border:1px solid var(--line);border-radius:10px;padding:16px 18px;margin:14px 0}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:14px 0}
+.grid.two{grid-template-columns:repeat(2,1fr)}
+.grid .card{margin:0} .grid h3{margin-top:0}
+.tag{font-size:11px;text-transform:uppercase;letter-spacing:.5px;padding:1px 7px;border-radius:4px;
+background:var(--pan2);margin-right:6px}
+.tag.nav{color:var(--acc)} .tag.add{color:var(--ok)} .tag.set{color:var(--warn)}
+.badge{display:inline-block;font-size:11.5px;font-weight:700;padding:1px 9px;border-radius:11px;margin-right:6px}
+.badge.done{background:#10301f;color:var(--ok);border:1px solid #1f6b46}
+.badge.partial{background:#322611;color:var(--warn);border:1px solid #7a5a1d}
+.badge.todo{background:#1d2530;color:var(--mut);border:1px solid var(--line)}
+.note{border-left:3px solid var(--acc);background:var(--pan2);border-radius:0 8px 8px 0;padding:10px 14px;margin:14px 0}
+.warn{border-left:3px solid var(--red);background:#221619;border-radius:0 8px 8px 0;padding:10px 14px;margin:14px 0}
+.warn b{color:var(--red)}
+table{border-collapse:collapse;width:100%;margin:12px 0;font-size:14px}
+th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+th{background:var(--pan2);color:var(--acc)}
+.step{display:flex;gap:12px;align-items:flex-start;margin:10px 0}
+.step .num{background:var(--acc);color:#000;border-radius:50%;min-width:26px;height:26px;
+display:flex;align-items:center;justify-content:center;font-weight:700;flex-shrink:0}
+kbd{background:var(--pan2);border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;
+padding:1px 6px;font-size:12px}
+footer{color:var(--mut);font-size:13px;margin-top:40px;border-top:1px solid var(--line);padding-top:16px}
+a{color:var(--acc)}
+</style></head>
+<body>
+<header><div class="wrap">
+  <h1><b>bOS</b> Co-pilot — guide</h1>
+  <div class="sub">A local, read-only assistant for implementing features in ComfortClick bOS.</div>
+  <span class="pill">Read-only · never writes to your bOS system · you apply every change yourself</span>
+</div></header>
+
+<div class="wrap">
+
+<h2><span class="n">·</span>What it is</h2>
+<p>bOS Co-pilot loads your exported <code>.bos</code> config, shows your <b>real object tree</b>
+(the same tree the Configurator shows), and walks you <b>step-by-step</b> through a feature — each
+step pinned to the actual node you need to touch.</p>
+<p>The part that makes it more than a checklist: <b>it reads your <code>.bos</code> and grades every
+step against it</b>. Each step is badged
+<span class="badge done">✓ Implemented</span><span class="badge partial">◐ Partial</span><span class="badge todo">○ To-do</span>
+automatically, so you can see at a glance what is already in your system and what is actual work left.</p>
+<div class="note"><b>Core assumption:</b> the <code>.bos</code> you load <b>is</b> your system. What the
+tool sees in the export is what you see in the Configurator. So a green
+<span class="badge done">✓ Implemented</span> badge means it is already there — you do not re-open
+the Configurator to confirm it. You read the badge and move on to the To-do steps.</div>
+<p>It is a <b>guide</b>, not an editor. It reads the export and renders instructions and status. Every
+change is applied by you, in the Configurator. Nothing it does can reach or modify your live system.</p>
+
+<h2><span class="n">1</span>Install &amp; run</h2>
+<p>You need Python 3, plus two packages (one-time):</p>
+<pre><code>pip install nrbf flask</code></pre>
+<p>Then, from the folder that contains <code>bos_copilot.py</code>, <code>bos_explore.py</code> and your
+export, launch it pointed at your config:</p>
+<pre><code>python bos_copilot.py GB1625-Building.bos</code></pre>
+<p>It parses the file (the first run is the slow one — it caches the result to
+<code>bos_map.json</code> so later launches are instant), starts a local server at
+<code>http://127.0.0.1:5000</code>, and opens your browser automatically.</p>
+<div class="note">Keep the terminal window open while you use it — that's the server. Press
+<kbd>Ctrl</kbd>+<kbd>C</kbd> there to stop. The tool always reflects the <code>.bos</code> you launched
+it on; after you apply changes in the Configurator and re-export, the cache rebuilds on the next run
+(it re-parses whenever the <code>.bos</code> is newer than <code>bos_map.json</code>), so the badges
+re-grade against the new export.</div>
+
+<h2><span class="n">2</span>The layout</h2>
+<p>Two panes, plus a floating <b>Guide</b> panel that appears when you pick a feature.</p>
+<div class="grid">
+  <div class="card"><h3>Left — Object tree</h3>
+    <p>Your real config tree. Type in the search box to highlight matching nodes. Click any node to
+    inspect it in the panel on the right.</p></div>
+  <div class="card"><h3>Right — Inspector</h3>
+    <p>Tabs <b>Settings · Values · Functions · Usages · Notes · Info</b>. Shows the node's
+    <b>type</b> and <b>settings</b>; for a Program it reconstructs the <b>Triggers</b> and the ordered
+    <b>Commands</b> tree (If / SetValue / Delay / Run / Comment). It also shows what the node
+    <b>reads</b>, what it <b>writes</b>, and (Usages) what references it.</p></div>
+  <div class="card"><h3>Floating — Guide</h3>
+    <p>Pick a feature from the dropdown (top bar) and a panel docks bottom-right: the ordered steps,
+    each with its live <b>status badge</b>. Click a step to <b>highlight its target node</b> (yellow)
+    in the tree.</p></div>
+</div>
+
+<h2><span class="n">3</span>Reading a node (left pane)</h2>
+<ol>
+  <li>Search or expand to the node, then click its name.</li>
+  <li>The inspector on the right shows everything the parser resolved for it.</li>
+</ol>
+<p>Example — clicking <code>OR Ventiler På status</code> shows <code>type=Gate</code>,
+<code>Type=1</code> (1 = OR, 0 = AND), and its 5 machine-valve inputs. That's how you confirm bindings
+straight from the export — and since the export is your system, that reading is authoritative.</p>
+
+<h2><span class="n">4</span>Using a guide</h2>
+<div class="step"><div class="num">1</div><div>Pick a feature in the <b>Guide</b> dropdown (top bar). The panel docks bottom-right.</div></div>
+<div class="step"><div class="num">2</div><div>Read the summary, then work top-to-bottom. Each step has an action badge:
+  <span class="tag nav">navigate</span> go to a node &nbsp;
+  <span class="tag add">add</span> create a node &nbsp;
+  <span class="tag set">set</span> set a value / binding.</div></div>
+<div class="step"><div class="num">3</div><div>Each step also shows a <b>status badge</b> graded against your <code>.bos</code>:
+  <span class="badge done">✓ Implemented</span><span class="badge partial">◐ Partial</span><span class="badge todo">○ To-do</span>
+  Skip the green ones — they're already in your system. Do the <b>To-do</b> (and finish the
+  <b>Partial</b>) steps.</div></div>
+<div class="step"><div class="num">4</div><div>Click a step → its <b>target</b> node lights up yellow in the left tree. Open the same node
+  in your Configurator and do what the <i>detail</i> line says. Steps that change a Program show a
+  <b>Before / After</b> diff of the command tree (preview only).</div></div>
+<p>Two guides ship with the app:
+<code>Verify roof pump follows any machine pump (takpump)</code> walks the roof-cooling chain, and
+<code>Stoppa takpump vid läckage</code> builds a leak interlock — the latter shows the status grading
+in action, with the wiring it depends on already badged green and only the new Program badged To-do.</p>
+
+<h2><span class="n">5</span>How the status grading works</h2>
+<p>This is the heart of the tool, and the reason you don't hand-verify anything. When you load a guide,
+the app re-reads each step's target from the parsed <code>.bos</code> and evaluates the step's
+<code>check</code> conditions. The header shows a running <b>X/Y implemented</b> count, and each step gets:</p>
+<table>
+  <tr><th>Badge</th><th>Meaning</th></tr>
+  <tr><td><span class="badge done">✓ Implemented</span></td><td>Every condition for this step is already true in your <code>.bos</code>. Nothing to do.</td></tr>
+  <tr><td><span class="badge partial">◐ Partial</span></td><td>Some conditions are met, some aren't. Finish the missing ones.</td></tr>
+  <tr><td><span class="badge todo">○ To-do</span></td><td>None of the conditions are met yet. This is real work.</td></tr>
+</table>
+<p>Under the badge, each individual condition is listed with <span style="color:var(--ok)">✓</span> or
+<span style="color:var(--red)">✗</span> so you see <i>exactly</i> which part is present and which is
+missing — e.g. "✓ Program exists" but "✗ trigger on Läckage utlöst".</p>
+<div class="note">Because the <code>.bos</code> the tool reads is your system, these badges are the
+verification. A condition shown ✓ is in place; you don't go confirm it by hand. Your job is to clear
+the ✗ items, re-export, and watch them turn green.</div>
+
+<h2><span class="n">6</span>The workflow loop (how new features get built)</h2>
+<p>The "intelligence" — turning a plain-language feature into exact steps against your real objects,
+with <code>check</code> conditions so the app can grade them — happens in chat with me. The app renders
+it. So the loop is:</p>
+<ol>
+  <li>You describe the feature you want.</li>
+  <li>I write a <b>playbook JSON</b> grounded in your real node paths, with a <code>check</code> on each
+    step so the app auto-grades it, and I hand it to you.</li>
+  <li>You drop the file into the <code>playbooks/</code> folder (next to <code>bos_copilot.py</code>).</li>
+  <li>Refresh the app — it appears in the dropdown, walks you through it, and tells you which steps are
+    already done in your <code>.bos</code>.</li>
+</ol>
+
+<h3>Playbook file format</h3>
+<p>Plain JSON, one file per feature. The fields the app actually renders are below (the reference copy
+lives in <code>playbooks/_SCHEMA.json</code>):</p>
+<pre><code>{
+  "feature": "Short name shown in the dropdown",
+  "summary": "What this change does and the rule it implements.",
+  "config":  "GB1625-Building.bos",
+  "steps": [
+    {
+      "n": 1,
+      "title":  "Short imperative step title",
+      "action": "navigate | add | set",
+      "target": "Tasks\\Exact\\Node\\Path",
+      "detail": "Exactly what to click/do in the Configurator.",
+      "check": {
+        "node": "Tasks\\Exact\\Node\\Path",
+        "all": [
+          {"exists": true, "label": "the node exists"},
+          {"trigger": "Läckage utlöst", "label": "trigger on the leak flag"}
+        ]
+      },
+      "diff": {
+        "node": "Tasks\\Exact\\Node\\Path",
+        "section": "commands",
+        "before": [],
+        "after": [ {"cmd": "SetValue", "text": "...Spärra.Value = True", "added": true} ]
+      }
+    }
+  ]
+}</code></pre>
+<table>
+  <tr><th>Field</th><th>Meaning</th></tr>
+  <tr><td><code>action</code></td><td>Sets the action badge: <span class="tag nav">navigate</span><span class="tag add">add</span><span class="tag set">set</span></td></tr>
+  <tr><td><code>target</code></td><td>A <b>real</b> node path. Clicking the step highlights it in the tree. Double backslashes in JSON (<code>\\</code>).</td></tr>
+  <tr><td><code>check</code></td><td>What makes the step auto-grade <b>Implemented / Partial / To-do</b>. <code>node</code> is read from your <code>.bos</code>, and every predicate in <code>all</code> is evaluated against it.</td></tr>
+  <tr><td><code>diff</code></td><td>Optional <b>Before / After</b> command-tree preview. Mark added lines <code>"added": true</code> and removed lines <code>"removed": true</code>. Preview only.</td></tr>
+</table>
+<h3>check predicates</h3>
+<p>Each entry in <code>check.all</code> is one condition tested against the <code>check.node</code>, with
+a <code>label</code> shown in the ✓/✗ list:</p>
+<table>
+  <tr><th>Predicate</th><th>True when…</th></tr>
+  <tr><td><code>{"exists": true}</code></td><td>the node is present in the <code>.bos</code>.</td></tr>
+  <tr><td><code>{"referencedBy": "Name"}</code></td><td>some object whose path contains <code>Name</code> references this node (its Usages).</td></tr>
+  <tr><td><code>{"writes": "Name"}</code></td><td>this node writes to an object whose path contains <code>Name</code>.</td></tr>
+  <tr><td><code>{"trigger": "Text"}</code></td><td>(Program) a trigger contains <code>Text</code>.</td></tr>
+  <tr><td><code>{"command": "Text", "under": "Parent"}</code></td><td>(Program) a command contains <code>Text</code>; optional <code>under</code> requires it nested under a command containing <code>Parent</code>.</td></tr>
+</table>
+<p>Files whose name starts with <code>_</code> (like <code>_SCHEMA.json</code>) are ignored by the app.
+A legacy <code>verify</code> field may appear in older playbooks; the app does not display it — the
+<code>check</code> block replaces it.</p>
+
+<h2><span class="n">·</span>Files at a glance</h2>
+<table>
+  <tr><th>File</th><th>Role</th></tr>
+  <tr><td><code>bos_copilot.py</code></td><td>The app you run.</td></tr>
+  <tr><td><code>bos_explore.py</code></td><td>The parser it reuses — must sit in the same folder.</td></tr>
+  <tr><td><code>bos_map.json</code></td><td>Cached parse of your config (auto-generated; rebuilt when the <code>.bos</code> is newer).</td></tr>
+  <tr><td><code>playbooks/*.json</code></td><td>Feature guides. Drop new ones here.</td></tr>
+  <tr><td><code>playbooks/_SCHEMA.json</code></td><td>The playbook format reference (ignored by the app).</td></tr>
+  <tr><td><code>GB1625-Building.bos</code></td><td>Your exported config (the input — and the single source of truth the tool grades against).</td></tr>
+</table>
+
+<footer>bOS Co-pilot is read-only. It never connects to or modifies your bOS system; you apply every
+change yourself in the Configurator. The badges reflect the <code>.bos</code> you loaded, which is your
+system — so trust them and skip what's already green.</footer>
+
+</div>
+</body></html>

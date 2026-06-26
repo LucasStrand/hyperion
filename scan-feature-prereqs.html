@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Box-Scan Verifiering — Setup & Prerequisites</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#f6f8fb; --card:#ffffff; --ink:#15212e; --mut:#5d6b7a; --line:#e4e9f0;
+  --accent:#2f6df0; --accent-soft:#eaf1ff;
+  --ok:#1f9d59; --ok-soft:#e7f6ee; --red:#d9453b; --red-soft:#fdeceb; --amber:#c98a1a; --amber-soft:#fbf2dd;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:16px/1.6 "Inter",system-ui,-apple-system,Segoe UI,sans-serif;-webkit-font-smoothing:antialiased}
+.wrap{max-width:840px;margin:0 auto;padding:0 22px}
+
+header{padding:54px 0 30px}
+.eyebrow{display:inline-flex;align-items:center;gap:8px;font-size:13px;font-weight:600;letter-spacing:.4px;
+  color:var(--accent);background:var(--accent-soft);border-radius:30px;padding:5px 13px}
+h1{font-size:34px;line-height:1.18;font-weight:700;letter-spacing:-.6px;margin:18px 0 8px}
+.lede{font-size:18px;color:var(--mut);margin:0;max-width:640px}
+
+h2{font-size:13px;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;color:var(--mut);
+  margin:46px 0 14px;display:flex;align-items:center;gap:10px}
+h2::after{content:"";flex:1;height:1px;background:var(--line)}
+h3{font-size:16px;font-weight:600;margin:0 0 4px}
+p{margin:10px 0}
+
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px 22px;margin:14px 0;
+  box-shadow:0 1px 2px rgba(20,33,46,.04)}
+code{font-family:"SF Mono",Consolas,monospace;font-size:13.5px;background:#eef2f7;border:1px solid var(--line);
+  border-radius:5px;padding:1px 6px;color:#0f3d8a}
+b{color:var(--ink)}
+a{color:var(--accent);text-decoration:none}
+
+/* prerequisite checklist */
+.checks{list-style:none;margin:6px 0 0;padding:0}
+.checks li{display:flex;gap:13px;padding:13px 0;border-top:1px solid var(--line)}
+.checks li:first-child{border-top:none}
+.ck{flex:0 0 26px;width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  font-size:14px;font-weight:700;margin-top:1px}
+.ck.todo{background:var(--accent-soft);color:var(--accent)}
+.ck.have{background:var(--ok-soft);color:var(--ok)}
+.checks .tx{flex:1}
+.checks .tx small{display:block;color:var(--mut);font-size:14px;margin-top:2px}
+.tag{font-size:11px;font-weight:700;letter-spacing:.3px;padding:2px 9px;border-radius:20px;white-space:nowrap}
+.tag.have{background:var(--ok-soft);color:var(--ok)}
+.tag.todo{background:var(--accent-soft);color:var(--accent)}
+
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:680px){.cols{grid-template-columns:1fr}}
+.cols .card{margin:0}
+.cardhead{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+.cardhead .ic{width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;
+  background:var(--accent-soft);color:var(--accent);flex:0 0 34px}
+
+.callout{display:flex;gap:14px;border-radius:12px;padding:16px 18px;margin:16px 0}
+.callout .bar{flex:0 0 4px;border-radius:4px}
+.callout.good{background:var(--ok-soft)} .callout.good .bar{background:var(--ok)}
+.callout.warn{background:var(--red-soft)} .callout.warn .bar{background:var(--red)}
+.callout h3{margin-bottom:3px}
+.callout.warn h3{color:var(--red)} .callout.good h3{color:var(--ok)}
+
+table{border-collapse:collapse;width:100%;margin:6px 0;font-size:15px}
+th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:12px;letter-spacing:.5px;text-transform:uppercase;color:var(--mut);font-weight:600}
+td code{font-size:13px}
+
+ol.steps{counter-reset:s;list-style:none;padding:0;margin:6px 0}
+ol.steps li{counter-increment:s;display:flex;gap:14px;padding:11px 0;border-top:1px solid var(--line)}
+ol.steps li:first-child{border-top:none}
+ol.steps li::before{content:counter(s);flex:0 0 28px;width:28px;height:28px;border-radius:8px;background:var(--ink);
+  color:#fff;font-weight:700;font-size:14px;display:flex;align-items:center;justify-content:center}
+figure{margin:8px 0 0}
+figcaption{color:var(--mut);font-size:13.5px;text-align:center;margin-top:8px}
+svg{max-width:100%;height:auto;display:block;margin:0 auto}
+footer{color:var(--mut);font-size:13px;text-align:center;margin:50px 0 10px}
+</style></head>
+<body>
+<div class="wrap">
+
+<header>
+  <span class="eyebrow">● bOS · Scan Station</span>
+  <h1>Right box, right spot.<br>Setup &amp; prerequisites.</h1>
+  <p class="lede">A worker scans two barcodes — the <b>spot</b>, then the <b>box</b>. bOS checks the pair and
+  turns the position <b style="color:var(--ok)">green</b> or <b style="color:var(--red)">red</b>. Here is everything that must be in place.</p>
+</header>
+
+<!-- HOW IT WORKS -->
+<h2>How it works</h2>
+<div class="card">
+<figure>
+<svg viewBox="0 0 800 150" role="img" aria-label="Barcode to scan station to bOS to visual">
+  <defs>
+    <marker id="a" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L8,4.5 L0,9 Z" fill="#9aa7b6"/></marker>
+    <style>
+      .n{fill:#fff;stroke:#e4e9f0;stroke-width:1.5}
+      .h{fill:#15212e;font:600 13px Inter,sans-serif;text-anchor:middle}
+      .s{fill:#5d6b7a;font:12px Inter,sans-serif;text-anchor:middle}
+      .l{fill:#9aa7b6;font:11px Inter,sans-serif;text-anchor:middle}
+      .w{stroke:#9aa7b6;stroke-width:1.6;fill:none}
+    </style>
+  </defs>
+  <g transform="translate(20,52)">
+    <rect class="n" width="92" height="58" rx="11"/>
+    <g fill="#15212e">
+      <rect x="14" y="14" width="3" height="30"/><rect x="20" y="14" width="2" height="30"/>
+      <rect x="25" y="14" width="5" height="30"/><rect x="33" y="14" width="2" height="30"/>
+      <rect x="38" y="14" width="4" height="30"/><rect x="45" y="14" width="2" height="30"/>
+      <rect x="50" y="14" width="3" height="30"/><rect x="56" y="14" width="5" height="30"/>
+      <rect x="64" y="14" width="2" height="30"/><rect x="69" y="14" width="3" height="30"/>
+    </g>
+  </g>
+  <text class="l" x="66" y="128">SPOT-1 · BOX-A</text>
+
+  <rect class="n" x="170" y="44" width="150" height="74" rx="13"/>
+  <text class="h" x="245" y="76">Scan station</text>
+  <text class="s" x="245" y="95">Windows app · .NET 8</text>
+  <text class="l" x="245" y="33">USB / HID keystrokes</text>
+
+  <rect class="n" x="380" y="44" width="150" height="74" rx="13"/>
+  <text class="h" x="455" y="72">bOS server</text>
+  <text class="s" x="455" y="90">Devices\Scanner</text>
+  <text class="s" x="455" y="106">→ Program</text>
+  <text class="l" x="455" y="33">HTTP · RPC SetValue</text>
+
+  <rect class="n" x="590" y="44" width="180" height="74" rx="13"/>
+  <text class="h" x="680" y="76">Inject visual</text>
+  <text class="s" x="680" y="95">green / red tile + beep</text>
+  <text class="l" x="680" y="33">OnChange</text>
+
+  <line class="w" x1="114" y1="81" x2="166" y2="81" marker-end="url(#a)"/>
+  <line class="w" x1="322" y1="81" x2="376" y2="81" marker-end="url(#a)"/>
+  <line class="w" x1="532" y1="81" x2="586" y2="81" marker-end="url(#a)"/>
+</svg>
+</figure>
+<p style="margin:14px 0 0;color:var(--mut);font-size:15px">Every scan — spot or box — lands in the <b>same</b> variable <code>Devices\Scanner.Value</code>.
+The Program tells them apart by their <b>prefix</b> (<code>SPOT-</code> vs <code>BOX-</code>), then matches the pair against the fixed pact
+<b>Plats&nbsp;1=BOX-A · 2=BOX-B · 3=BOX-C</b>.</p>
+</div>
+
+<!-- PREREQUISITES -->
+<h2>Prerequisites</h2>
+<div class="cols">
+
+  <div class="card">
+    <div class="cardhead">
+      <span class="ic">🖥️</span><h3>Scan station (PC)</h3>
+    </div>
+    <ul class="checks">
+      <li><span class="ck todo">○</span><span class="tx">Windows PC by the boxes, always on<small>Runs <code>ScannerToComfortclick.exe</code></small></span></li>
+      <li><span class="ck todo">○</span><span class="tx">.NET 8 Desktop Runtime installed</span></li>
+      <li><span class="ck todo">○</span><span class="tx">USB scanner in HID-keyboard mode<small>Must send an <b>Enter / CR suffix</b> after each code</small></span></li>
+      <li><span class="ck todo">○</span><span class="tx">Network route to the bOS server IP</span></li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <div class="cardhead">
+      <span class="ic">🏛️</span><h3>bOS server</h3>
+    </div>
+    <ul class="checks">
+      <li><span class="ck todo">○</span><span class="tx">RPC API enabled + user/password<small>Building → API → RPC service</small></span></li>
+      <li><span class="ck have">✓</span><span class="tx">Variable <code>Devices\Scanner</code> exists <span class="tag have">already there</span></span></li>
+      <li><span class="ck todo">○</span><span class="tx">Program <code>Verifiera box</code> + variables + tiles <span class="tag todo">build</span><small>From the co-pilot “Box-scan kontroll” guide</small></span></li>
+    </ul>
+  </div>
+</div>
+
+<div class="card">
+  <div class="cardhead"><span class="ic">🏷️</span><h3>Physical labels</h3></div>
+  <ul class="checks">
+    <li><span class="ck todo">○</span><span class="tx">Stick <code>SPOT-1</code> / <code>SPOT-2</code> / <code>SPOT-3</code> on the three positions</span></li>
+    <li><span class="ck todo">○</span><span class="tx">Stick <code>BOX-A</code> / <code>BOX-B</code> / <code>BOX-C</code> on the boxes<small>Label text must match the Program’s <code>If</code> strings <b>exactly</b> (case &amp; spacing)</small></span></li>
+  </ul>
+</div>
+
+<!-- SCANNER CODE? -->
+<h2>Does the scanner app need code changes?</h2>
+<div class="callout good">
+  <div class="bar"></div>
+  <div>
+    <h3>No — configuration only.</h3>
+    <p style="margin:4px 0 0">The repo already sends each scan, verbatim, to one bOS variable. You only point it at the right place:</p>
+    <table style="margin-top:10px">
+      <tr><th>Setting</th><th>Value</th></tr>
+      <tr><td>Object Path</td><td><code>Devices/Scanner</code></td></tr>
+      <tr><td>Value Name</td><td><code>Value</code></td></tr>
+      <tr><td>IP / Port / User / Password</td><td>your bOS RPC details</td></tr>
+      <tr><td>Min Length</td><td><code>3</code></td></tr>
+      <tr><td>Scanners tab</td><td>Detect → scan → Add (whitelist the gun)</td></tr>
+    </table>
+  </div>
+</div>
+
+<!-- THE GOTCHA -->
+<div class="callout warn">
+  <div class="bar"></div>
+  <div>
+    <h3>One thing to watch: duplicate scans</h3>
+    <p style="margin:4px 0 0">The Program fires on <code>Devices\Scanner.Value</code> <b>OnChange</b>. Scanning the
+    <b>same code twice in a row</b> doesn’t change the value, so it won’t fire.</p>
+    <p style="margin:8px 0 0"><b>Fix (bOS side, no repo change):</b> make the Program’s last command
+    <code>Set Value Devices\Scanner.Value = ""</code>. Every scan then starts from empty, so even a repeat counts as a change.</p>
+  </div>
+</div>
+
+<!-- SETUP ORDER -->
+<h2>Setup order</h2>
+<div class="card">
+<ol class="steps">
+  <li>Enable RPC in bOS, set user/password, note the server IP.</li>
+  <li>Build the logic + visual tiles from the co-pilot guide (incl. the <code>=&nbsp;""</code> clear).</li>
+  <li>Print &amp; stick the SPOT / BOX labels.</li>
+  <li>Point the scan app at <code>Devices/Scanner</code> · <code>Value</code> and whitelist the gun.</li>
+  <li>Test Connection → Start Listening → scan <code>SPOT-1</code> then <code>BOX-A</code> → tile goes green.</li>
+</ol>
+</div>
+<p style="color:var(--mut);font-size:14.5px;margin-top:10px">No gun handy? Type a value straight into <code>Devices\Scanner.Value</code> in the Configurator to simulate a scan.</p>
+
+<footer>bOS Co-pilot · GB1625 injection hall · see <code>scan-feature-guide.html</code> for the full illustrated walkthrough</footer>
+
+</div>
+</body></html>

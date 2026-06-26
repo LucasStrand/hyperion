@@ -1,0 +1,242 @@
+{
+  "feature": "Box-scan kontroll (rätt låda på rätt plats)",
+  "summary": "Operatören skannar TVÅ streckkoder per placering med EN handskanner: först platsen (SPOT-1/2/3), sedan lådan (BOX-A/B/C). Ett bOS-Program jämför paret mot den fasta kopplingen Plats1=BOX-A, Plats2=BOX-B, Plats3=BOX-C och tänder grönt (rätt) eller rött (fel låda) per plats på 'Inject visual'-sidan, plus en textbanner och larmljud vid fel. Skannerappen (scanner-to-comfortclick) skriver redan varje skanning till Devices\\Scanner.Value via RPC SetValue - INGEN ändring i appen behövs, all logik ligger i bOS. Varje streckkod tas isär på sitt INNEHALL (prefix), inte på vilken variabel som ändrades, eftersom alla skanningar landar i samma Devices\\Scanner.Value. Varje steg badge:as Implemented / Partial / To-do mot din exporterade .bos. Diffar och checkar ar FORHANDSVISNING - inget skrivs till bOS. Vill du byta streckkodstexterna - byt dem pa ETT stalle (config nedan) och i Programmets If-villkor.",
+  "config": {
+    "scanner_var": "Devices\\Scanner",
+    "scanner_value": "Devices\\Scanner.Value",
+    "folder": "Tasks\\Box Scan Kontroll",
+    "program": "Tasks\\Box Scan Kontroll\\Verifiera box",
+    "spot_codes": {"1": "SPOT-1", "2": "SPOT-2", "3": "SPOT-3"},
+    "box_codes": {"A": "BOX-A", "B": "BOX-B", "C": "BOX-C"},
+    "pairing": {"SPOT-1": "BOX-A", "SPOT-2": "BOX-B", "SPOT-3": "BOX-C"},
+    "visual_page": "Themes\\Thule\\Inject visual\\Inject visual"
+  },
+  "steps": [
+    {
+      "n": 1,
+      "title": "Bekräfta att skannern skriver till Devices\\Scanner",
+      "action": "navigate",
+      "target": "Devices\\Scanner",
+      "detail": "Skannerappen postar varje streckkod till denna String-variabel (objectName=Devices\\Scanner, valueName=Value) via RPC SetValue. Alla skanningar - plats OCH låda - hamnar i SAMMA Value. Därför skiljer vi dem åt på innehållet (prefix SPOT- / BOX-), inte på vilken variabel som ändrades. Obs: noden har även 'DecodedValue' - om ett befintligt program redan avkodar råvärdet, peka triggern/jämförelserna mot DecodedValue istället för Value.",
+      "verify": "Devices\\Scanner är Variable.String med ett 'Value' (och 'DecodedValue').",
+      "check": {
+        "node": "Devices\\Scanner",
+        "all": [
+          {"exists": true, "label": "Devices\\Scanner finns"}
+        ]
+      }
+    },
+    {
+      "n": 2,
+      "title": "Skapa mapp + status-variabler",
+      "action": "add",
+      "target": "Tasks\\Box Scan Kontroll",
+      "detail": "Högerklicka Tasks > Add > Folder, döp den 'Box Scan Kontroll'. Lägg sedan i den: 2 interna styrvariabler — 'State' (Variable.Integer, 0) och 'PendingSpot' (Variable.Integer, 0); 6 visnings-booleans — 'Plats1 OK','Plats2 OK','Plats3 OK','Plats1 Fel','Plats2 Fel','Plats3 Fel' (Variable.Boolean, False); och 1 textbanner — 'Meddelande' (Variable.String, 'Skanna en plats'). State=0 betyder ledig, State=1 betyder 'väntar på lådskanning för PendingSpot'.",
+      "verify": "Mappen 'Box Scan Kontroll' innehåller State, PendingSpot, Plats1-3 OK, Plats1-3 Fel och Meddelande.",
+      "check": {
+        "node": "Tasks\\Box Scan Kontroll\\State",
+        "all": [
+          {"exists": true, "label": "State-variabel finns"}
+        ]
+      }
+    },
+    {
+      "n": 3,
+      "title": "Skapa Programmet 'Verifiera box'",
+      "action": "add",
+      "target": "Tasks\\Box Scan Kontroll",
+      "detail": "I mappen 'Box Scan Kontroll': högerklicka > Add > Program. Döp det 'Verifiera box'. Här bor hela jämförelselogiken.",
+      "verify": "Program 'Verifiera box' finns under Tasks\\Box Scan Kontroll.",
+      "check": {
+        "node": "Tasks\\Box Scan Kontroll\\Verifiera box",
+        "all": [
+          {"exists": true, "label": "Program 'Verifiera box' finns"}
+        ]
+      }
+    },
+    {
+      "n": 4,
+      "title": "Trigger: skanning ändras",
+      "action": "set",
+      "target": "Devices\\Scanner",
+      "detail": "I Programmets Triggers-flik: Add trigger > Reference = Devices\\Scanner, Property = Value, Condition = OnChange. Varje ny skanning kör om hela kommandoträdet. (Använder du DecodedValue, peka triggern dit.)",
+      "verify": "Triggers visar: Devices\\Scanner.Value OnChange",
+      "check": {
+        "node": "Tasks\\Box Scan Kontroll\\Verifiera box",
+        "all": [
+          {"exists": true, "label": "Program finns"},
+          {"trigger": "Scanner", "label": "trigger på Scanner.Value"}
+        ]
+      },
+      "diff": {
+        "node": "Tasks\\Box Scan Kontroll\\Verifiera box",
+        "section": "triggers",
+        "before": [],
+        "after": [
+          {"cmd": "IfTrigger", "text": "Devices\\Scanner.Value OnChange", "added": true}
+        ]
+      }
+    },
+    {
+      "n": 5,
+      "title": "Kommandon: armera vid plats-skanning (SPOT-1/2/3)",
+      "action": "add",
+      "target": "Tasks\\Box Scan Kontroll\\Verifiera box",
+      "detail": "I Commands, lägg tre If-block (= jämförelse, Value-text). När en PLATS skannas: spara vilken plats, sätt State=1 och nollställ den platsens OK/Fel + sätt en uppmaning. Reagerar bara på de exakta SPOT-texterna, så övriga skanningar ignoreras här. Upprepa mönstret för SPOT-2 (PendingSpot=2, Plats2) och SPOT-3 (PendingSpot=3, Plats3).",
+      "verify": "Tre If-block: 'If Scanner.Value = SPOT-1/2/3' som var och en sätter PendingSpot, State=1, rensar platsens OK/Fel och skriver Meddelande.",
+      "check": {
+        "node": "Tasks\\Box Scan Kontroll\\Verifiera box",
+        "all": [
+          {"command": "Scanner.Value = SPOT-1", "label": "armera-block för SPOT-1 finns"}
+        ]
+      },
+      "diff": {
+        "node": "Tasks\\Box Scan Kontroll\\Verifiera box",
+        "section": "commands",
+        "before": [],
+        "after": [
+          {"cmd": "If", "added": true, "text": "If Devices\\Scanner.Value = SPOT-1", "children": [
+            {"cmd": "SetValue", "added": true, "text": "Tasks\\Box Scan Kontroll\\PendingSpot.Value = 1"},
+            {"cmd": "SetValue", "added": true, "text": "Tasks\\Box Scan Kontroll\\State.Value = 1"},
+            {"cmd": "SetValue", "added": true, "text": "Tasks\\Box Scan Kontroll\\Plats1 OK.Value = False"},
+            {"cmd": "SetValue", "added": true, "text": "Tasks\\Box Scan Kontroll\\Plats1 Fel.Value = False"},
+            {"cmd": "SetValue", "added": true, "text": "Tasks\\Box Scan Kontroll\\Meddelande.Value = Plats 1: skanna lådan"}
+          ]},
+          {"cmd": "If", "added": true, "text": "If Devices\\Scanner.Value = SPOT-2", "children": [
+            {"cmd": "SetValue", "added": true, "text": "PendingSpot=2; State=1; Plats2 OK=False; Plats2 Fel=False; Meddelande = Plats 2: skanna lådan"}
+          ]},
+          {"cmd": "If", "added": true, "text": "If Devices\\Scanner.Value = SPOT-3", "children": [
+            {"cmd": "SetValue", "added": true, "text": "PendingSpot=3; State=1; Plats3 OK=False; Plats3 Fel=False; Meddelande = Plats 3: skanna lådan"}
+          ]}
+        ]
+      }
+    },
+    {
+      "n": 6,
+      "title": "Kommandon: utvärdera lådan för Plats 1",
+      "action": "add",
+      "target": "Tasks\\Box Scan Kontroll\\Verifiera box",
+      "detail": "Lägg ett 'If State = 1' block. I det, 'If PendingSpot = 1'. Inuti: jämför mot de EXAKTA låd-koderna (bara '=', inga 'starts-with' behövs). Rätt låda (BOX-A) -> Plats1 OK=True + grön text. Fel låda (BOX-B eller BOX-C) -> Plats1 Fel=True + röd text. Sätt State=0 i varje gren så placeringen 'kvitteras' och en ny SPOT-skanning kan armera om. Att räkna upp fel-koderna explicit gör att en omskannad SPOT inte råkar flagga 'fel'.",
+      "verify": "Under 'If State=1 > If PendingSpot=1': BOX-A sätter Plats1 OK=True, BOX-B/BOX-C sätter Plats1 Fel=True, och State=0.",
+      "check": {
+        "node": "Tasks\\Box Scan Kontroll\\Verifiera box",
+        "all": [
+          {"command": "Plats1 OK.Value = True", "under": "Scanner.Value = BOX-A", "label": "rätt-låda-gren för Plats 1 finns"}
+        ]
+      },
+      "diff": {
+        "node": "Tasks\\Box Scan Kontroll\\Verifiera box",
+        "section": "commands",
+        "before": [
+          {"cmd": "If", "text": "If Devices\\Scanner.Value = SPOT-3", "children": []}
+        ],
+        "after": [
+          {"cmd": "If", "text": "If Devices\\Scanner.Value = SPOT-3", "children": []},
+          {"cmd": "If", "added": true, "text": "If Tasks\\Box Scan Kontroll\\State.Value = 1", "children": [
+            {"cmd": "If", "added": true, "text": "If Tasks\\Box Scan Kontroll\\PendingSpot.Value = 1", "children": [
+              {"cmd": "If", "added": true, "text": "If Devices\\Scanner.Value = BOX-A", "children": [
+                {"cmd": "SetValue", "added": true, "text": "Tasks\\Box Scan Kontroll\\Plats1 OK.Value = True"},
+                {"cmd": "SetValue", "added": true, "text": "Tasks\\Box Scan Kontroll\\Meddelande.Value = OK - Plats 1 ratt lada"},
+                {"cmd": "SetValue", "added": true, "text": "Tasks\\Box Scan Kontroll\\State.Value = 0"}
+              ]},
+              {"cmd": "If", "added": true, "text": "If Devices\\Scanner.Value = BOX-B", "children": [
+                {"cmd": "SetValue", "added": true, "text": "Tasks\\Box Scan Kontroll\\Plats1 Fel.Value = True"},
+                {"cmd": "SetValue", "added": true, "text": "Tasks\\Box Scan Kontroll\\Meddelande.Value = FEL LADA pa plats 1 - ta bort"},
+                {"cmd": "SetValue", "added": true, "text": "Tasks\\Box Scan Kontroll\\State.Value = 0"}
+              ]},
+              {"cmd": "If", "added": true, "text": "If Devices\\Scanner.Value = BOX-C", "children": [
+                {"cmd": "SetValue", "added": true, "text": "Plats1 Fel = True; Meddelande = FEL LADA pa plats 1; State = 0"}
+              ]}
+            ]}
+          ]}
+        ]
+      }
+    },
+    {
+      "n": 7,
+      "title": "Kommandon: upprepa utvärdering för Plats 2 och 3",
+      "action": "add",
+      "target": "Tasks\\Box Scan Kontroll\\Verifiera box",
+      "detail": "Inuti samma 'If State=1' block, lägg 'If PendingSpot = 2' (rätt = BOX-B -> Plats2 OK; BOX-A/BOX-C -> Plats2 Fel) och 'If PendingSpot = 3' (rätt = BOX-C -> Plats3 OK; BOX-A/BOX-B -> Plats3 Fel). Varje gren sätter State=0. Det är hela jämförelse-tabellen Plats1=BOX-A, Plats2=BOX-B, Plats3=BOX-C.",
+      "verify": "If PendingSpot=2 och =3 finns med rätt/fel-grenar och State=0.",
+      "check": {
+        "node": "Tasks\\Box Scan Kontroll\\Verifiera box",
+        "all": [
+          {"command": "Plats3 OK.Value = True", "under": "Scanner.Value = BOX-C", "label": "rätt-låda-gren för Plats 3 finns"}
+        ]
+      },
+      "diff": {
+        "node": "Tasks\\Box Scan Kontroll\\Verifiera box",
+        "section": "commands",
+        "before": [
+          {"cmd": "If", "text": "If PendingSpot.Value = 1", "children": [
+            {"cmd": "If", "text": "...BOX-A/B/C grenar för Plats 1"}
+          ]}
+        ],
+        "after": [
+          {"cmd": "If", "text": "If PendingSpot.Value = 1", "children": [
+            {"cmd": "If", "text": "...BOX-A/B/C grenar för Plats 1"}
+          ]},
+          {"cmd": "If", "added": true, "text": "If Tasks\\Box Scan Kontroll\\PendingSpot.Value = 2", "children": [
+            {"cmd": "If", "added": true, "text": "If Scanner.Value = BOX-B -> Plats2 OK=True; State=0"},
+            {"cmd": "If", "added": true, "text": "If Scanner.Value = BOX-A -> Plats2 Fel=True; State=0"},
+            {"cmd": "If", "added": true, "text": "If Scanner.Value = BOX-C -> Plats2 Fel=True; State=0"}
+          ]},
+          {"cmd": "If", "added": true, "text": "If Tasks\\Box Scan Kontroll\\PendingSpot.Value = 3", "children": [
+            {"cmd": "If", "added": true, "text": "If Scanner.Value = BOX-C -> Plats3 OK=True; State=0"},
+            {"cmd": "If", "added": true, "text": "If Scanner.Value = BOX-A -> Plats3 Fel=True; State=0"},
+            {"cmd": "If", "added": true, "text": "If Scanner.Value = BOX-B -> Plats3 Fel=True; State=0"}
+          ]}
+        ]
+      }
+    },
+    {
+      "n": 8,
+      "title": "Valfritt: timeout som nollställer en halv skanning",
+      "action": "set",
+      "target": "Tasks\\Box Scan Kontroll\\State",
+      "detail": "Skannar man en plats men aldrig lådan blir State=1 hängande. Lägg ett separat litet Program 'Timeout' (trigger: State OnChange) eller i samma program: 'If State = 1' -> Delay 15 Seconds -> 'If State = 1' (fortfarande) -> State=0 och Meddelande='Skanna en plats'. Då armeras systemet om av sig självt.",
+      "verify": "Efter ~15 s utan lådskanning går State tillbaka till 0 och bannern återgår."
+    },
+    {
+      "n": 9,
+      "title": "Visual: lägg en status-bricka per plats på 'Inject visual'",
+      "action": "add",
+      "target": "Themes\\Thule\\Inject visual\\Inject visual",
+      "detail": "Öppna Themes\\Thule\\Inject visual i Configuratorn (samma vy som dina 84001-84005 brickor). Lägg PER plats en BOSTheme.Controls.Boolean-kontroll placerad vid den fysiska boxens position i planritningen. Enklast: använd TVÅ booleans-kontroller staplade per plats - en 'OK' och en 'Fel' - precis som dina befintliga AV/PÅ-brickor. 'OK'-brickan binds till Plats1 OK, 'Fel'-brickan till Plats1 Fel. Upprepa för plats 2 och 3 (totalt 6 brickor, eller 3 om du istället driver färgen via en Template).",
+      "verify": "Tre platser har var sin grön/röd statusbricka på Inject visual, placerade vid rätt box."
+    },
+    {
+      "n": 10,
+      "title": "Visual: bind färg + text på varje bricka",
+      "action": "set",
+      "target": "Themes\\Thule\\Inject visual\\Inject visual",
+      "detail": "Per bricka i högerpanelen (samma fält som på din skärmdump): Value = motsvarande variabel (t.ex. Tasks\\Box Scan Kontroll\\Plats1 OK). 'OK'-bricka: Back Color On = grön (välj en SystemColor), Text True = 'RATT', Text False = '' (tom), Status Display = Manual, Show Text = True. 'Fel'-bricka: Back Color On = röd, Text True = 'FEL LADA', Text False = ''. Sätt 'Control Type' = Label så den bara visar status (inte klickbar), och Show Confirmation = False. Då lyser brickan grön vid rätt och röd vid fel, annars neutral.",
+      "verify": "OK-brickan blir grön när Plats1 OK=True; Fel-brickan blir röd när Plats1 Fel=True; båda neutrala när False."
+    },
+    {
+      "n": 11,
+      "title": "Visual: stor textbanner för operatören",
+      "action": "add",
+      "target": "Themes\\Thule\\Inject visual\\Inject visual",
+      "detail": "Lägg en bred Label-kontroll överst på sidan. Bind den till Tasks\\Box Scan Kontroll\\Meddelande (Value), Control Type = Label, stor Font Size. Den visar 'Plats 2: skanna lådan', 'OK - Plats 2 ratt lada' eller 'FEL LADA pa plats 2 - ta bort' - ord, inte bara färg.",
+      "verify": "Bannern uppe på Inject visual speglar Meddelande-texten live vid varje skanning."
+    },
+    {
+      "n": 12,
+      "title": "Valfritt: larmljud vid fel låda",
+      "action": "set",
+      "target": "Tasks\\Box Scan Kontroll\\Verifiera box",
+      "detail": "I varje 'Fel'-gren (där PlatsN Fel sätts True), lägg ett Run-kommando som spelar en av dina befintliga SoundFiles (General\\Media\\... > funktion Play). Ger operatören ett hörbart pip vid fel placering utöver det röda.",
+      "verify": "Vid fel låda hörs ljudet samtidigt som brickan blir röd."
+    },
+    {
+      "n": 13,
+      "title": "Testa hela flödet",
+      "action": "navigate",
+      "target": "Devices\\Scanner",
+      "detail": "Skanna SPOT-1: bannern säger 'Plats 1: skanna lådan'. Skanna BOX-A: Plats 1 blir grön + 'RATT'. Skanna SPOT-2 sedan BOX-A (fel): Plats 2 blir röd + ljud. Bekräfta att rätt bricka reagerar och att ny SPOT-skanning nollställer den platsen. Tips: i Configuratorn kan du sätta Devices\\Scanner.Value för hand för att simulera skanningar utan fysisk skanner.",
+      "verify": "Rätt par -> grön på rätt plats; fel par -> röd + ljud på rätt plats; ny placering armerar om."
+    }
+  ]
+}

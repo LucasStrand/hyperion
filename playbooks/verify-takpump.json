@@ -1,0 +1,55 @@
+{
+  "feature": "Verify roof pump follows any machine pump (takpump)",
+  "summary": "Confirms the existing roof-cooling logic implements your rule: if ANY machine valve opens the roof pump runs, and it stays on until ALL machine valves are off. The inputs are already wired to the OR gate; this playbook walks the chain so you can confirm the OUTPUT path (gate -> TAKSTATUS -> plant enable) is correct.",
+  "config": "GB1625-Building.bos",
+  "steps": [
+    {
+      "n": 1,
+      "title": "Open the roof-cooling task group",
+      "action": "navigate",
+      "target": "Tasks\\Kylvatten anläggning tak 84000-CM1",
+      "detail": "In the Configurator tree, expand Tasks and select this group. It holds the two gates, the TAKSTATUS flag, and the two control Programs.",
+      "verify": "You see 'OR Ventiler På status', 'AND Ventiler På status', a TAKSTATUS boolean, and the Uppstart/Avstängning Programs."
+    },
+    {
+      "n": 2,
+      "title": "Check the OR gate is the 'any-on' trigger",
+      "action": "navigate",
+      "target": "Tasks\\Kylvatten anläggning tak 84000-CM1\\OR Ventiler På status",
+      "detail": "Open this Gate. In the inspector (left pane), confirm Type = 1 (OR) and that it has 5 inputs, one per machine valve 'På status' signal.",
+      "verify": "Settings show Type=1; Inputs list the 5 Maskin 84001B/84002B/84003B/84004/84005 valve signals. OR = roof on when any one is on, off only when all are off."
+    },
+    {
+      "n": 3,
+      "title": "Confirm the AND gate is NOT the shut-off",
+      "action": "navigate",
+      "target": "Tasks\\Kylvatten anläggning tak 84000-CM1\\AND Ventiler På status",
+      "detail": "Open this Gate (Type = 0 / AND, same 5 inputs). AND is only true when EVERY machine is on. Make sure your shut-off logic does NOT use this gate to turn the roof pump off - 'all off' must be handled by the OR gate going false, not the AND gate.",
+      "verify": "Type=0 (AND). If a Program uses this gate to STOP the pump, that is a bug; the OR gate going false is what should stop it."
+    },
+    {
+      "n": 4,
+      "title": "Trace the Program that sets TAKSTATUS",
+      "action": "set",
+      "target": "Tasks\\Kylvatten anläggning tak 84000-CM1\\Uppstart/Avstängning 84000-CM1",
+      "detail": "Open this Program. Confirm it READS the OR gate output and WRITES it to the TAKSTATUS flag (If OR gate = true -> SetValue TAKSTATUS = true; else false). This is the link the gate output itself doesn't carry, so the Program must do it.",
+      "verify": "The Program's If-condition reads 'OR Ventiler På status' and its SetValue target is TAKSTATUS. If it instead keys off the AND gate, that's the issue to fix."
+    },
+    {
+      "n": 5,
+      "title": "Confirm TAKSTATUS drives the plant enable",
+      "action": "set",
+      "target": "Tasks\\Kylvatten anläggning tak 84000-CM1\\Avstängning/Start av Kylvatten anläggning",
+      "detail": "Open this Program. Confirm it maps TAKSTATUS to the LoRa-Modbus plant enable 'Devices\\Lora-Modbus\\Slave\\84000 Spärra' in the correct direction (pump should RUN when TAKSTATUS true; Spärra = block, so check whether it sets Spärra=false to allow running, or sets a run command - get the polarity right).",
+      "verify": "Direction is correct: any machine on -> TAKSTATUS true -> plant allowed to run; all machines off -> TAKSTATUS false -> plant stopped/blocked."
+    },
+    {
+      "n": 6,
+      "title": "Live test with one machine",
+      "action": "navigate",
+      "target": "Devices\\Lora-Modbus\\Slave",
+      "detail": "With the logic confirmed, in the live client open one machine valve only. The roof pump should start. Open a second machine - still running. Close the first - still running (second still on). Close the last - roof pump stops.",
+      "verify": "Roof pump runs while ANY machine valve is open and stops only when the LAST one closes. That is your intended takpump behavior."
+    }
+  ]
+}

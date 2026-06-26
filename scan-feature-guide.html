@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Box-Scan Verifiering · The Spellbook</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@400;700;900&family=Cinzel:wght@400;500;600&family=IM+Fell+English:ital@0;1&display=swap" rel="stylesheet">
+<style>
+:root{
+  --parch1:#f3e4c3; --parch2:#e7d2a6; --parch3:#dcc18a;
+  --ink:#3a2611; --ink2:#5b4424; --mut:#7a5f3a;
+  --gold:#9a6b1f; --gold2:#c79a3e; --burgundy:#6e1f24; --green:#2f5d2a; --red:#7a241c;
+  --rule:#b8945a;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0; color:var(--ink);
+  font:19px/1.7 "IM Fell English", Georgia, "Times New Roman", serif;
+  background:
+    radial-gradient(120% 80% at 50% -10%, #f7ecd2 0%, rgba(247,236,210,0) 60%),
+    radial-gradient(60% 50% at 100% 100%, #d8bd86 0%, rgba(216,189,134,0) 55%),
+    radial-gradient(60% 50% at 0% 100%, #d8bd86 0%, rgba(216,189,134,0) 55%),
+    linear-gradient(180deg,var(--parch1),var(--parch2) 55%,var(--parch3));
+  background-attachment:fixed;
+  padding:0 0 90px;
+}
+/* aged paper grain + vignette overlay */
+body::before{
+  content:""; position:fixed; inset:0; pointer-events:none; z-index:0; mix-blend-mode:multiply; opacity:.5;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)' opacity='0.35'/></svg>");
+}
+body::after{
+  content:""; position:fixed; inset:0; pointer-events:none; z-index:0;
+  box-shadow:inset 0 0 160px 40px rgba(74,43,17,.28), inset 0 0 40px 10px rgba(74,43,17,.18);
+}
+.wrap{position:relative; z-index:1; max-width:920px; margin:0 auto; padding:0 26px}
+
+/* header */
+header{position:relative; z-index:1; text-align:center; padding:54px 20px 18px}
+.crest{font-size:46px; line-height:1; color:var(--burgundy); text-shadow:0 1px 0 #f6ecd4}
+h1{
+  font-family:"Cinzel Decorative", serif; font-weight:900;
+  font-size:42px; line-height:1.1; margin:14px 0 6px; color:var(--burgundy);
+  letter-spacing:.5px; text-shadow:0 1px 0 rgba(255,250,235,.6);
+}
+.tagline{font-family:"Cinzel",serif; font-size:16px; letter-spacing:3px; text-transform:uppercase; color:var(--gold)}
+.sub{font-style:italic; color:var(--ink2); max-width:640px; margin:12px auto 0}
+
+/* flourish divider */
+.flourish{display:flex; align-items:center; gap:14px; justify-content:center; margin:26px 0 6px; color:var(--rule)}
+.flourish::before,.flourish::after{content:""; height:1px; flex:1; max-width:230px;
+  background:linear-gradient(90deg,transparent,var(--rule),transparent)}
+.flourish span{font-size:18px; color:var(--gold)}
+
+h2{
+  font-family:"Cinzel", serif; font-weight:600; font-size:27px; color:var(--burgundy);
+  margin:46px 0 6px; padding-bottom:6px; border-bottom:2px solid var(--rule);
+}
+h2 .rn{font-family:"Cinzel Decorative",serif; color:var(--gold); margin-right:12px}
+h3{font-family:"Cinzel",serif; font-weight:600; color:var(--gold); font-size:20px; margin:26px 0 4px; letter-spacing:.3px}
+p{margin:12px 0}
+b,strong{color:var(--burgundy)}
+a{color:var(--burgundy)}
+code{
+  font-family:"Cascadia Code",Consolas,monospace; font-size:14.5px;
+  background:rgba(110,31,36,.08); border:1px solid rgba(110,31,36,.25);
+  border-radius:4px; padding:1px 6px; color:var(--burgundy);
+}
+ul,ol{margin:12px 0; padding-left:26px} li{margin:7px 0}
+
+/* parchment cards */
+.scroll{
+  position:relative; background:linear-gradient(180deg, rgba(255,250,236,.66), rgba(240,222,182,.5));
+  border:1px solid var(--rule); border-radius:6px; padding:18px 22px; margin:18px 0;
+  box-shadow:0 2px 0 rgba(120,90,40,.18), inset 0 0 30px rgba(154,107,31,.10);
+}
+.scroll h3:first-child{margin-top:0}
+.grid{display:grid; grid-template-columns:repeat(2,1fr); gap:16px; margin:18px 0}
+.grid .scroll{margin:0}
+@media(max-width:680px){.grid{grid-template-columns:1fr}}
+
+/* sigils / callouts */
+.note,.warn,.tip{border-left:4px solid var(--gold); background:rgba(199,154,62,.12);
+  border-radius:0 6px 6px 0; padding:12px 16px; margin:18px 0}
+.warn{border-left-color:var(--red); background:rgba(122,36,28,.12)}
+.warn b{color:var(--red)}
+.tip{border-left-color:var(--green); background:rgba(47,93,42,.12)}
+.label{font-family:"Cinzel",serif; font-size:12px; letter-spacing:2px; text-transform:uppercase}
+
+/* tables */
+table{border-collapse:collapse; width:100%; margin:14px 0; font-size:16.5px;
+  background:rgba(255,250,236,.5)}
+th,td{border:1px solid var(--rule); padding:9px 12px; text-align:left; vertical-align:top}
+th{font-family:"Cinzel",serif; font-weight:600; background:rgba(154,107,31,.18); color:var(--burgundy); letter-spacing:.4px}
+
+/* spell-step list */
+.steps{counter-reset:step; list-style:none; padding-left:0; margin:14px 0}
+.steps>li{counter-increment:step; position:relative; padding:8px 0 8px 56px; margin:6px 0; border-bottom:1px dashed rgba(154,107,31,.4)}
+.steps>li:last-child{border-bottom:none}
+.steps>li::before{content:counter(step); position:absolute; left:8px; top:8px;
+  width:36px; height:36px; border-radius:50%; background:var(--burgundy); color:var(--parch1);
+  font-family:"Cinzel Decorative",serif; font-weight:700; display:flex; align-items:center; justify-content:center;
+  box-shadow:0 0 0 3px rgba(199,154,62,.5)}
+
+.pill{display:inline-block; font-family:"Cinzel",serif; font-size:11.5px; letter-spacing:1px; text-transform:uppercase;
+  padding:2px 10px; border-radius:20px; border:1px solid var(--rule); background:rgba(255,250,236,.5); color:var(--ink2)}
+.pill.ok{color:var(--green); border-color:var(--green)}
+.pill.no{color:var(--red); border-color:var(--red)}
+
+figure{margin:22px 0; text-align:center}
+figcaption{font-style:italic; color:var(--mut); font-size:15px; margin-top:8px}
+svg{max-width:100%; height:auto}
+
+footer{position:relative; z-index:1; text-align:center; color:var(--mut); font-style:italic;
+  margin-top:50px; padding-top:18px}
+</style></head>
+<body>
+
+<header>
+  <div class="crest">⚷</div>
+  <h1>The Box-Scan Verifiering</h1>
+  <div class="tagline">· A Charm for Placing the Right Crate ·</div>
+  <p class="sub">How a barcode scanner, a Windows herald, and the bOS enchantment work together
+  to tell the worker — in green or red — whether the right plastic box has landed in the right spot.</p>
+</header>
+
+<div class="wrap">
+
+<div class="flourish"><span>✦ ❧ ✦</span></div>
+
+<div class="scroll">
+  <p class="label" style="color:var(--gold)">The tale in one breath</p>
+  <p style="margin:6px 0 0">Three boxes catch falling plastic at three positions. To prove each box sits where it
+  belongs, a worker scans <b>two barcodes</b> with one handheld gun — first the <b>spot</b>, then the <b>box</b>.
+  The scan station (a tiny Windows app from your <code>scanner-to-comfortclick</code> repo) whispers each code to
+  the bOS server. A bOS Program compares the pair against the fixed pact —
+  <b>Plats&nbsp;1 = BOX-A, Plats&nbsp;2 = BOX-B, Plats&nbsp;3 = BOX-C</b> — and lights that spot
+  <span style="color:var(--green)"><b>green</b></span> (right) or
+  <span style="color:var(--red)"><b>red</b></span> (wrong) on the <i>Inject visual</i> page, with a banner and a beep.</p>
+</div>
+
+<h2><span class="rn">I</span>The Chain of Command</h2>
+<p>Every scan travels the same road. Nothing here is magic once you can see the whole path:</p>
+
+<figure>
+<svg viewBox="0 0 880 230" role="img" aria-label="Data pipeline from barcode to visual">
+  <defs>
+    <marker id="ar" markerWidth="11" markerHeight="11" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L9,5 L0,10 Z" fill="#6e1f24"/>
+    </marker>
+    <style>
+      .bx{fill:rgba(255,250,236,.85); stroke:#9a6b1f; stroke-width:1.5}
+      .t{font-family:Cinzel, serif; font-size:13px; fill:#3a2611}
+      .ti{font-family:Cinzel, serif; font-size:12.5px; font-weight:600; fill:#6e1f24}
+      .lbl{font-family:'IM Fell English', serif; font-style:italic; font-size:11.5px; fill:#7a5f3a}
+      .ln{stroke:#6e1f24; stroke-width:2; fill:none}
+    </style>
+  </defs>
+  <g>
+    <rect class="bx" x="8"  y="60" width="120" height="62" rx="8"/>
+    <text class="ti" x="68" y="84" text-anchor="middle">Barcode</text>
+    <text class="t"  x="68" y="104" text-anchor="middle">SPOT-1 · BOX-A</text>
+
+    <rect class="bx" x="172" y="60" width="120" height="62" rx="8"/>
+    <text class="ti" x="232" y="84" text-anchor="middle">Scanner gun</text>
+    <text class="t"  x="232" y="104" text-anchor="middle">USB · HID</text>
+
+    <rect class="bx" x="336" y="44" width="150" height="94" rx="8"/>
+    <text class="ti" x="411" y="70" text-anchor="middle">Scan station</text>
+    <text class="t"  x="411" y="90" text-anchor="middle">ScannerTo-</text>
+    <text class="t"  x="411" y="106" text-anchor="middle">Comfortclick.exe</text>
+    <text class="lbl" x="411" y="126" text-anchor="middle">Windows · .NET 8</text>
+
+    <rect class="bx" x="530" y="44" width="150" height="94" rx="8"/>
+    <text class="ti" x="605" y="70" text-anchor="middle">bOS server</text>
+    <text class="t"  x="605" y="90" text-anchor="middle">Devices\Scanner</text>
+    <text class="t"  x="605" y="106" text-anchor="middle">Program: Verifiera</text>
+    <text class="lbl" x="605" y="126" text-anchor="middle">RPC API</text>
+
+    <rect class="bx" x="724" y="60" width="148" height="62" rx="8"/>
+    <text class="ti" x="798" y="84" text-anchor="middle">Inject visual</text>
+    <text class="t"  x="798" y="104" text-anchor="middle">green / red tiles</text>
+  </g>
+  <line class="ln" x1="128" y1="91" x2="170" y2="91" marker-end="url(#ar)"/>
+  <line class="ln" x1="292" y1="91" x2="334" y2="91" marker-end="url(#ar)"/>
+  <line class="ln" x1="486" y1="91" x2="528" y2="91" marker-end="url(#ar)"/>
+  <line class="ln" x1="680" y1="91" x2="722" y2="91" marker-end="url(#ar)"/>
+  <text class="lbl" x="150" y="50" text-anchor="middle">scan</text>
+  <text class="lbl" x="313" y="50" text-anchor="middle">keystrokes</text>
+  <text class="lbl" x="507" y="34" text-anchor="middle">HTTP · SetValue</text>
+  <text class="lbl" x="701" y="50" text-anchor="middle">OnChange</text>
+  <text class="lbl" x="440" y="178" text-anchor="middle">— the only network hop: scan-station PC → bOS server —</text>
+</svg>
+<figcaption>The single network hop is the RPC call. Everything left of the bOS server lives on the scan-station PC.</figcaption>
+</figure>
+
+<h2><span class="rn">II</span>What Must Be True Before Any of It Works</h2>
+<p>Prerequisites, grouped by where they live. None are exotic — but if one is missing, the spot simply never lights up.</p>
+
+<div class="grid">
+  <div class="scroll">
+    <h3>⌨ At the scan station (PC)</h3>
+    <ul>
+      <li>A Windows PC that <b>stays powered on</b> by the boxes, running <code>ScannerToComfortclick.exe</code>.</li>
+      <li><b>.NET 8 Desktop Runtime</b> installed.</li>
+      <li>One (or more) USB barcode scanner in <b>HID-keyboard</b> mode.</li>
+      <li>The scanner must send an <b>Enter / carriage-return suffix</b> after each code — that suffix is what triggers the send. (Most guns do by default; if not, scan the “add CR suffix” config barcode from the gun’s manual.)</li>
+      <li>A clear <b>network route</b> from this PC to the bOS server IP.</li>
+    </ul>
+  </div>
+  <div class="scroll">
+    <h3>🏰 On the bOS server</h3>
+    <ul>
+      <li><b>RPC API enabled</b> (Building → API → RPC service) with a <b>username + password</b>.</li>
+      <li>The string variable <code>Devices\Scanner</code> exists. <span class="pill ok">already in your config</span></li>
+      <li>The Program <code>Tasks\Box&nbsp;Scan&nbsp;Kontroll\Verifiera&nbsp;box</code> and its variables + visual tiles, built from the co-pilot playbook. <span class="pill no">to build</span></li>
+      <li>Printed labels in place: <b>SPOT-1/2/3</b> on the three positions, <b>BOX-A/B/C</b> on the boxes.</li>
+    </ul>
+  </div>
+</div>
+
+<h2><span class="rn">III</span>The Scanner Software — Do You Need to Change the Code?</h2>
+
+<div class="tip">
+  <p class="label" style="color:var(--green)">The short answer</p>
+  <p style="margin:6px 0 0"><b>No source changes are required in the <code>scanner-to-comfortclick</code> repo.</b>
+  The two-barcode feature is pure <i>configuration</i> on the app side plus logic on the bOS side. The app already
+  does exactly what we need: it sends each scanned string, verbatim, to one bOS variable.</p>
+</div>
+
+<h3>How the app actually sends a scan</h3>
+<p>Reading the repo (<code>ScannerListener.cs</code> → <code>ComfortclickClient.cs</code>), the flow is:</p>
+<ol>
+  <li>Raw-Input collects keystrokes <b>per device</b> into a buffer (so only your whitelisted gun is heard).</li>
+  <li>On the <b>Enter</b> key it trims the buffer and, if it meets <code>MinBarcodeLength</code>, fires a send.</li>
+  <li>It POSTs this JSON to <code>/API/RPC/SetValue</code> (Basic-auth):</li>
+</ol>
+<div class="scroll" style="font-family:Consolas,monospace; font-size:14.5px; color:var(--ink2)">
+{ "objectName": "Devices\\Scanner", "valueName": "Value", "value": "SPOT-1" }
+</div>
+<p>So <code>Devices\Scanner.Value</code> becomes <code>"SPOT-1"</code>, then <code>"BOX-A"</code>, and so on — one variable, every scan.
+That is the whole reason our bOS Program tells spot-codes from box-codes by their <b>prefix</b>, not by which variable changed.</p>
+
+<h3>Configuration to set in the app (one time)</h3>
+<table>
+  <tr><th>Tab</th><th>Field</th><th>Value</th></tr>
+  <tr><td>Settings</td><td>IP / Port</td><td>your bOS server (e.g. <code>192.168.1.10</code> / <code>80</code>)</td></tr>
+  <tr><td>Settings</td><td>Username / Password</td><td>the RPC credentials from bOS</td></tr>
+  <tr><td>Settings</td><td><b>Object Path</b></td><td><code>Devices/Scanner</code></td></tr>
+  <tr><td>Settings</td><td><b>Value Name</b></td><td><code>Value</code></td></tr>
+  <tr><td>Settings</td><td>Min Length</td><td><code>3</code> &nbsp;(<code>SPOT-1</code> is 6 chars — safe)</td></tr>
+  <tr><td>Scanners</td><td>Detect → scan → Add</td><td>whitelist each physical gun</td></tr>
+  <tr><td>Status</td><td>Test Connection → Start Listening</td><td>green = ready</td></tr>
+</table>
+
+<div class="warn">
+  <p class="label" style="color:var(--red)">⚠ The one true gotcha — and its cure</p>
+  <p style="margin:6px 0 0">The Program is triggered by <code>Devices\Scanner.Value</code> <b>OnChange</b>. If the <b>same code is
+  scanned twice in a row</b>, the value does not <i>change</i> — so <b>OnChange never fires</b> and the second scan is
+  silently ignored. In the normal spot→box→spot→box rhythm the value always alternates, so it usually works… until a
+  worker re-scans the same spot, or two placements repeat a code.</p>
+  <p><b>The cure (bOS side, no repo change):</b> make the very last command of <code>Verifiera box</code>:
+  <code>Set Value&nbsp;&nbsp;Devices\Scanner.Value = ""</code>. Clearing it after every scan means the next code —
+  even an identical one — is always a real <i>change</i>, so it always fires. (Clearing to <code>""</code> re-fires once with an
+  empty value, matches no <code>If</code>, then <code>"" → ""</code> is no change, so it stops. No loop.)</p>
+  <p style="margin:8px 0 0">Avoid the tempting alternative of appending a timestamp/counter in the app — that would break the
+  exact <code>= "SPOT-1"</code> matching the Program relies on.</p>
+</div>
+
+<h2><span class="rn">IV</span>The Enchantment — How the bOS Program Thinks</h2>
+<p>One Program, two acts. A scanned <b>spot</b> <i>arms</i> a position; the next <b>box</b> scan <i>judges</i> it.
+Here is the state it walks through:</p>
+
+<figure>
+<svg viewBox="0 0 860 300" role="img" aria-label="State machine of the verification program">
+  <defs>
+    <marker id="ar2" markerWidth="11" markerHeight="11" refX="8" refY="5" orient="auto"><path d="M0,0 L9,5 L0,10 Z" fill="#6e1f24"/></marker>
+    <style>
+      .st{fill:rgba(255,250,236,.9); stroke-width:2}
+      .stt{font-family:Cinzel, serif; font-size:14px; font-weight:600; text-anchor:middle}
+      .stx{font-family:'IM Fell English',serif; font-size:12px; font-style:italic; text-anchor:middle; fill:#7a5f3a}
+      .e{stroke:#6e1f24; stroke-width:2; fill:none}
+      .el{font-family:'IM Fell English',serif; font-size:12.5px; font-style:italic; fill:#5b4424; text-anchor:middle}
+    </style>
+  </defs>
+
+  <ellipse class="st" cx="120" cy="150" rx="84" ry="48" stroke="#9a6b1f"/>
+  <text class="stt" x="120" y="146" fill="#3a2611">IDLE</text>
+  <text class="stx" x="120" y="166">State = 0</text>
+
+  <ellipse class="st" cx="430" cy="150" rx="92" ry="50" stroke="#c79a3e"/>
+  <text class="stt" x="430" y="142" fill="#9a6b1f">ARMED</text>
+  <text class="stx" x="430" y="160">State = 1</text>
+  <text class="stx" x="430" y="176">PendingSpot = n</text>
+
+  <ellipse class="st" cx="745" cy="74" rx="92" ry="44" stroke="#2f5d2a"/>
+  <text class="stt" x="745" y="70" fill="#2f5d2a">RÄTT (green)</text>
+  <text class="stx" x="745" y="90">Plats n OK = True</text>
+
+  <ellipse class="st" cx="745" cy="226" rx="92" ry="44" stroke="#7a241c"/>
+  <text class="stt" x="745" y="222" fill="#7a241c">FEL (red + beep)</text>
+  <text class="stx" x="745" y="242">Plats n Fel = True</text>
+
+  <path class="e" d="M204,150 H336" marker-end="url(#ar2)"/>
+  <text class="el" x="270" y="138">scan SPOT-n</text>
+
+  <path class="e" d="M510,120 C600,90 640,84 654,80" marker-end="url(#ar2)"/>
+  <text class="el" x="585" y="96">scan right box</text>
+
+  <path class="e" d="M510,180 C600,210 640,218 654,222" marker-end="url(#ar2)"/>
+  <text class="el" x="585" y="210">scan wrong box</text>
+
+  <path class="e" d="M745,118 C745,150 540,250 250,196 200,186 170,178 150,172" marker-end="url(#ar2)" stroke-dasharray="5 4"/>
+  <path class="e" d="M745,182 C745,150 540,60 250,118 210,128 180,138 160,146" marker-end="url(#ar2)" stroke-dasharray="5 4"/>
+  <text class="el" x="430" y="262">…both set State = 0 → ready for the next placement</text>
+</svg>
+<figcaption>A re-scanned <b>SPOT-n</b> while ARMED just re-arms (and clears that spot’s OK/Fel) — so a stray spot scan can never be mistaken for a wrong box.</figcaption>
+</figure>
+
+<div class="note">
+  <p style="margin:0"><b>Want to read the real tree?</b> Open the co-pilot web app and browse to
+  <code>Tasks\Box&nbsp;Scan&nbsp;Kontroll\Verifiera&nbsp;box</code> — the full <b>16 <code>If</code> · 42 <code>Set&nbsp;Value</code> · 6 beep</b>
+  command tree is rendered there exactly as the Configurator shows it.</p>
+</div>
+
+<h2><span class="rn">V</span>The Window the Worker Watches</h2>
+<p>On the <i>Inject visual</i> page, each of the three positions gets a status tile (a <code>BOSTheme.Controls.Boolean</code>
+like your existing 84001–84005 tiles), placed where the box physically sits. A wide banner up top spells out the words.</p>
+
+<figure>
+<svg viewBox="0 0 760 300" role="img" aria-label="Inject visual mockup with three status boxes">
+  <defs><style>
+    .room{fill:rgba(120,90,40,.10); stroke:#9a6b1f; stroke-width:2}
+    .tileok{fill:#2f5d2a; stroke:#1e3d1b}
+    .tilebad{fill:#7a241c; stroke:#4f1611}
+    .tileidle{fill:rgba(120,90,40,.18); stroke:#9a6b1f}
+    .tt{font-family:Cinzel,serif; font-size:14px; font-weight:600; text-anchor:middle; fill:#f3e4c3}
+    .tti{font-family:Cinzel,serif; font-size:13px; font-weight:600; text-anchor:middle; fill:#5b4424}
+    .cap{font-family:'IM Fell English',serif; font-style:italic; font-size:12px; text-anchor:middle; fill:#7a5f3a}
+    .ban{fill:rgba(255,250,236,.8); stroke:#9a6b1f}
+    .bant{font-family:Cinzel,serif; font-size:15px; text-anchor:middle; fill:#6e1f24; font-weight:600}
+  </style></defs>
+
+  <rect class="ban" x="40" y="22" width="680" height="40" rx="6"/>
+  <text class="bant" x="380" y="48">Meddelande:  “FEL LÅDA på plats 2 – ta bort”</text>
+
+  <rect class="room" x="40" y="84" width="680" height="186" rx="8"/>
+
+  <rect class="tileok" x="90" y="130" width="150" height="92" rx="10"/>
+  <text class="tt" x="165" y="172">✓ RÄTT</text>
+  <text class="tt" x="165" y="194" style="font-size:12px">Plats 1 · BOX-A</text>
+  <text class="cap" x="165" y="248">grön = rätt låda</text>
+
+  <rect class="tilebad" x="305" y="130" width="150" height="92" rx="10"/>
+  <text class="tt" x="380" y="172">✗ FEL LÅDA</text>
+  <text class="tt" x="380" y="194" style="font-size:12px">Plats 2 · väntade BOX-B</text>
+  <text class="cap" x="380" y="248">röd + pip = fel</text>
+
+  <rect class="tileidle" x="520" y="130" width="150" height="92" rx="10"/>
+  <text class="tti" x="595" y="172">Plats 3: skanna lådan</text>
+  <text class="cap" x="595" y="248">gul/neutral = väntar</text>
+</svg>
+<figcaption>Two booleans per spot (<code>Plats n OK</code> → green, <code>Plats n Fel</code> → red) bound to each tile’s <b>Back Color On</b> — neutral when both are false.</figcaption>
+</figure>
+
+<h2><span class="rn">VI</span>Setup, Spell by Spell</h2>
+<ol class="steps">
+  <li><b>bOS — open the gates.</b> Building → API → enable the RPC service; set a username &amp; password; note the server IP.</li>
+  <li><b>bOS — build the logic.</b> In the co-pilot, run the <i>“Box-scan kontroll”</i> guide: create the <code>Box Scan Kontroll</code> folder, its variables, and the <code>Verifiera box</code> Program (trigger <code>Devices\Scanner.Value</code> OnChange). Add the final <code>Devices\Scanner.Value = ""</code> clear (the gotcha cure).</li>
+  <li><b>bOS — dress the window.</b> On <i>Inject visual</i>, add the OK/Fel tiles per spot and the <code>Meddelande</code> banner; bind colours to the variables.</li>
+  <li><b>Labels — print &amp; stick.</b> SPOT-1/2/3 on the three positions, BOX-A/B/C on the boxes.</li>
+  <li><b>Scan station — point it home.</b> In the app’s Settings, set Object Path <code>Devices/Scanner</code>, Value Name <code>Value</code>, and the RPC credentials. Whitelist the gun on the Scanners tab.</li>
+  <li><b>Prove it.</b> Test Connection → Start Listening → scan a pair (see below).</li>
+</ol>
+
+<h2><span class="rn">VII</span>The Proving — and When It Sulks</h2>
+<div class="scroll">
+  <h3>A clean test run</h3>
+  <p>Scan <code>SPOT-1</code> → banner reads <i>“Plats 1: skanna lådan”.</i> Scan <code>BOX-A</code> → Plats 1 turns
+  <span style="color:var(--green)"><b>green</b></span>. Now scan <code>SPOT-2</code> then <code>BOX-A</code> (deliberately wrong) →
+  Plats 2 turns <span style="color:var(--red)"><b>red</b></span> and beeps.
+  <i>No physical gun handy?</i> In the Configurator you can type a value straight into <code>Devices\Scanner.Value</code> to simulate a scan.</p>
+</div>
+<table>
+  <tr><th>Symptom</th><th>Most likely cause</th></tr>
+  <tr><td>Nothing happens on any scan</td><td>App not “Listening”, gun not whitelisted, or RPC disabled / wrong credentials.</td></tr>
+  <tr><td>First scan works, identical re-scan is ignored</td><td>The OnChange gotcha — add the <code>Devices\Scanner.Value = ""</code> clear.</td></tr>
+  <tr><td>Codes arrive merged or truncated</td><td>Gun missing the Enter/CR suffix, or Min Length too high.</td></tr>
+  <tr><td>“Connection failed” on Test</td><td>IP/port unreachable; confirm the PC can ping the bOS server.</td></tr>
+  <tr><td>Right box reads as wrong</td><td>Printed label text ≠ the Program’s <code>If</code> string (case/spacing). They must match exactly.</td></tr>
+</table>
+
+<div class="flourish"><span>✦ ❧ ✦</span></div>
+<footer>
+  <p>Inscribed for the GB1625 injection hall · bOS Co-pilot · Mischief managed.</p>
+</footer>
+
+</div>
+</body></html>

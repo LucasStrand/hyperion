@@ -1,0 +1,36 @@
+# Rust / Tauri build artifacts
+hyperion/src-tauri/target/
+**/target/
+
+# Node
+node_modules/
+hyperion/dist/
+hyperion/dist-ssr/
+*.local
+
+# Python caches
+__pycache__/
+*.pyc
+.ruff_cache/
+
+# Editor / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+*.suo
+*.sw?
+
+# Claude / agent local state (never commit secrets or local agent state)
+.claude/
+
+# Logs
+*.log
+logs/
+
+# Hyperion project stores (local SQLite DBs / vault blobs are per-machine, never committed)
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+vault.bin

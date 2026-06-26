@@ -1,0 +1,46 @@
+{
+  "_comment": "Playbook schema for bOS Co-pilot. One .json file per feature in this folder. Files starting with _ are ignored by the app. Claude authors these from chat; you drop them in and the app renders them as step-by-step guidance pinned to your real object tree AND auto-grades each step against your .bos (Implemented / Partial / To-do). The .bos the tool reads is your system, so a green step is already in place - you do not re-verify it by hand. The app renders: n, title, action, target, detail, check, diff. A legacy 'verify' field is NOT displayed; use 'check' instead.",
+  "feature": "Short feature name shown in the dropdown",
+  "summary": "1-3 sentence plain-language description of what this change does and the rule it implements.",
+  "config": "GB1625-Building.bos",
+  "steps": [
+    {
+      "n": 1,
+      "title": "Short imperative step title",
+      "action": "navigate | add | set   (controls the colored action badge: navigate=go to a node, add=create a node, set=set a value/binding)",
+      "target": "Tasks\\Exact\\Node\\Path   (a real node path; clicking the step highlights it yellow in the left tree)",
+      "detail": "Exactly what to click/do in the Configurator for this step.",
+      "check": {
+        "_comment": "Makes the step auto-grade Implemented (all true) / Partial (some) / To-do (none). 'node' is read from your .bos; every predicate in 'all' is tested against it and shown with a checkmark/cross next to its 'label'.",
+        "node": "Tasks\\Exact\\Node\\Path",
+        "all": [
+          {"exists": true, "label": "the node exists in the .bos"},
+          {"referencedBy": "SomeOtherNode", "label": "an object whose path contains this string references the node (its Usages)"},
+          {"writes": "TargetNode", "label": "this node writes to an object whose path contains this string"},
+          {"trigger": "Trigger text", "label": "(Program) a trigger contains this text"},
+          {"command": "Spärra.Value = True", "under": "Läckage utlöst.Value = True", "label": "(Program) a command contains this text; optional 'under' requires it nested under a command containing that string"}
+        ]
+      },
+      "diff": {
+        "_comment": "Optional Before/After command-tree preview shown under the step. Mark new lines added:true and removed lines removed:true. Preview only - nothing is written to bOS. 'section' is 'commands' or 'triggers'.",
+        "node": "Tasks\\Exact\\Node\\Path",
+        "section": "commands",
+        "before": [],
+        "after": [
+          {"cmd": "If", "text": "If ...Läckage utlöst.Value = True", "added": true, "children": [
+            {"cmd": "SetValue", "text": "...84000 Spärra.Value = True", "added": true}
+          ]}
+        ]
+      },
+      "highlight": {
+        "_comment": "Optional. When the step is selected, the app navigates to 'node' and highlights the exact field ON the page, overlaying a before->after chip. May be a single object or an array of them. kind = setting (Modbus/settings row, field = setting key e.g. ReadCyclically) | command (Program command line, field = substring of the command text e.g. 'TEST TAKSTATUS.Value = True') | binding (theme tile / write target, field = substring of the bound object path). before/after render the struck old value and green new value; warn renders a red badge next to the row.",
+        "kind": "setting | command | binding",
+        "node": "Tasks\\Exact\\Node\\Path",
+        "field": "ReadCyclically  (setting key) | command-text substring | bound-object substring",
+        "before": "old value (optional)",
+        "after": "new value (optional)",
+        "warn": "red warning badge text (optional)"
+      }
+    }
+  ]
+}

@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Box-Scan — Barcode Manual</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#fafafa;--ink:#1a1a1a;--soft:#e9ecef;--mut:#6b7177;--blue:#0058a3;--blue-soft:#e6f0fa;--yellow:#ffda1a;--ok:#2e8b3d;--red:#d62c1a}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 "Inter",system-ui,Segoe UI,sans-serif;-webkit-font-smoothing:antialiased}
+.wrap{max-width:900px;margin:0 auto;padding:0 20px 80px}
+.cover{background:var(--yellow);border-radius:0 0 22px 22px;padding:30px 26px 26px;margin-bottom:30px}
+.cover .brand{font-weight:800;letter-spacing:.5px;font-size:13px;text-transform:uppercase}
+.cover h1{font-size:30px;font-weight:800;letter-spacing:-.6px;margin:6px 0 2px}
+.cover p{margin:0;font-weight:600;color:#3a3a2a}
+.cover .hero{margin-top:14px;background:#fff;border:3px solid var(--ink);border-radius:16px;padding:10px}
+.step{background:#fff;border:3px solid var(--ink);border-radius:18px;padding:20px;margin:24px 0;position:relative}
+.num{position:absolute;top:-18px;left:20px;width:42px;height:42px;border-radius:50%;background:var(--ink);color:#fff;
+  font-weight:800;font-size:20px;display:flex;align-items:center;justify-content:center;border:3px solid #fff;box-shadow:0 0 0 3px var(--ink)}
+.step h2{font-size:19px;font-weight:700;margin:10px 0 2px}
+.step .cap{color:var(--mut);font-weight:600;font-size:14.5px;margin:0 0 12px}
+.illus{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:680px){.illus{grid-template-columns:1fr}}
+.panel{border:2px solid var(--ink);border-radius:12px;padding:10px;background:#fff}
+.panel.ok{border-color:var(--ok);background:#f1f9f2}
+.panel.no{border-color:var(--red);background:#fdf1f0}
+.panel .tag{display:inline-flex;align-items:center;gap:6px;font-weight:800;font-size:13px;margin-bottom:4px}
+.panel.ok .tag{color:var(--ok)} .panel.no .tag{color:var(--red)}
+svg{display:block;width:100%;height:auto}
+code{font-family:"SF Mono",Consolas,monospace;font-size:13px;background:var(--soft);border-radius:5px;padding:1px 6px}
+.printbar{display:flex;align-items:center;gap:14px;margin-bottom:14px;flex-wrap:wrap}
+.field{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;color:var(--mut);text-transform:uppercase;letter-spacing:.3px}
+input[type=range]{width:130px}
+button.big{border:2px solid var(--ink);background:var(--yellow);border-radius:10px;padding:11px 22px;font:800 16px Inter,sans-serif;cursor:pointer}
+button.big:hover{filter:brightness(.97)}
+.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
+@media(max-width:680px){.grid{grid-template-columns:1fr}}
+.label{border:2px solid var(--ink);border-radius:12px;padding:14px 14px 10px;text-align:center;background:#fff}
+.label .lcap{font-size:11px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;color:var(--mut);margin-bottom:8px}
+.label .txt{font:700 18px "SF Mono",Consolas,monospace;letter-spacing:3px;margin-top:6px}
+/* app-instruction rows */
+.rows{list-style:none;margin:0;padding:0}
+.rows li{display:flex;gap:12px;padding:9px 0;border-top:1px solid var(--soft);font-weight:600}
+.rows li:first-child{border-top:none}
+.rows .b{flex:0 0 26px;width:26px;height:26px;border-radius:7px;background:var(--blue);color:#fff;font-weight:800;font-size:13px;display:flex;align-items:center;justify-content:center}
+.rows small{display:block;color:var(--mut);font-weight:500;font-size:13.5px}
+.mascot{display:flex;align-items:center;gap:14px;background:var(--blue-soft);border:2px solid var(--blue);border-radius:14px;padding:12px 16px;margin:24px 0;font-weight:600}
+.mascot svg{width:56px;flex:0 0 56px}
+@media print{
+  body *{visibility:hidden!important}
+  #printArea,#printArea *{visibility:visible!important}
+  #printArea{position:absolute;left:0;top:0;width:100%}
+  .printbar,.num{display:none!important}
+  #printArea{border:none;padding:0;margin:0}
+  .grid{grid-template-columns:repeat(2,1fr);gap:10px}
+  .label{break-inside:avoid;border:1px solid #999}
+}
+</style></head>
+<body>
+<div class="wrap">
+
+<!-- COVER -->
+<div class="cover">
+  <div class="brand">bOS · Box-Scan</div>
+  <h1>Barcode Manual</h1>
+  <p>Print labels · set up the app · scan spot, then box · screen turns green or red.</p>
+  <div class="hero">
+    <svg viewBox="0 0 760 150" aria-label="Scan a label, screen shows OK">
+      <g fill="none" stroke="#1a1a1a" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round">
+        <path d="M70 60 h70 a10 10 0 0 1 10 10 v18 a10 10 0 0 1 -10 10 h-26 l-10 24 a8 8 0 0 1 -8 6 h-12 a8 8 0 0 1 -8 -10 l8 -20 h-4 a14 14 0 0 1 -14 -14 v-18 a16 16 0 0 1 16 -16 z"/>
+        <rect x="150" y="66" width="14" height="26" rx="3"/>
+        <g stroke-dasharray="3 7"><line x1="170" y1="79" x2="300" y2="79"/></g>
+        <rect x="300" y="50" width="120" height="58" rx="8"/>
+        <g stroke-width="3"><line x1="316" y1="64" x2="316" y2="94"/><line x1="324" y1="64" x2="324" y2="94"/><line x1="332" y1="64" x2="332" y2="94"/><line x1="342" y1="64" x2="342" y2="94"/><line x1="350" y1="64" x2="350" y2="94"/><line x1="360" y1="64" x2="360" y2="94"/><line x1="370" y1="64" x2="370" y2="94"/><line x1="380" y1="64" x2="380" y2="94"/><line x1="390" y1="64" x2="390" y2="94"/><line x1="400" y1="64" x2="400" y2="94"/></g>
+        <line x1="450" y1="79" x2="540" y2="79"/><path d="M540 79 l-14 -8 m14 8 l-14 8"/>
+        <rect x="560" y="36" width="150" height="92" rx="10"/>
+        <line x1="635" y1="128" x2="635" y2="144"/><line x1="600" y1="144" x2="670" y2="144"/>
+        <path d="M600 82 l22 22 l40 -46" stroke="#2e8b3d" stroke-width="6"/>
+      </g>
+    </svg>
+  </div>
+</div>
+
+<!-- STEP 1 — PRINT (barcodes shown directly) -->
+<div class="step">
+  <div class="num">1</div>
+  <h2>Print the labels</h2>
+  <p class="cap">Six ready-made labels. Press Print, then cut them out.</p>
+  <div class="printbar">
+    <button class="big" id="print">🖨 Print labels</button>
+    <span class="field">Size <input id="size" type="range" min="1" max="5" step="1" value="2"> <span id="sizev">2</span>px</span>
+  </div>
+  <div id="printArea">
+    <div class="grid" id="grid"></div>
+  </div>
+</div>
+
+<!-- STEP 2 — SET UP THE APP (RPC program) -->
+<div class="step">
+  <div class="num">2</div>
+  <h2>Set up the scanner app</h2>
+  <p class="cap">In the ScannerToComfortclick app, fill three tabs — then it sends every scan to bOS.</p>
+  <div class="illus" style="grid-template-columns:1fr 1.3fr">
+    <div class="panel">
+      <svg viewBox="0 0 240 150" aria-label="App window with tabs">
+        <g fill="none" stroke="#1a1a1a" stroke-width="3" stroke-linejoin="round" stroke-linecap="round">
+          <rect x="20" y="22" width="200" height="112" rx="8"/>
+          <line x1="20" y1="48" x2="220" y2="48"/>
+          <rect x="20" y="22" width="56" height="26" rx="6" fill="#e6f0fa"/>
+          <line x1="34" y1="66" x2="150" y2="66"/><line x1="34" y1="84" x2="170" y2="84"/><line x1="34" y1="102" x2="120" y2="102"/>
+          <rect x="150" y="110" width="56" height="18" rx="5" fill="#ffda1a"/>
+        </g>
+        <text x="48" y="40" font-family="Inter" font-weight="800" font-size="12" text-anchor="middle" fill="#0058a3">Tabs</text>
+        <text x="178" y="123" font-family="Inter" font-weight="800" font-size="10" text-anchor="middle" fill="#1a1a1a">Save</text>
+      </svg>
+    </div>
+    <div class="panel">
+      <ol class="rows">
+        <li><span class="b">A</span><span>Settings tab<small>IP · Port · Username · Password (your bOS RPC). Object Path <code>Devices/Scanner</code>, Value Name <code>Value</code>, Min Length <code>3</code>. → <b>Save Settings</b>.</small></span></li>
+        <li><span class="b">B</span><span>Scanners tab<small>Detect → scan a label → Add. This whitelists your gun.</small></span></li>
+        <li><span class="b">C</span><span>Status tab<small><b>Test Connection</b> → <b>Start Listening</b>. Green = ready.</small></span></li>
+      </ol>
+    </div>
+  </div>
+</div>
+
+<!-- STEP 3 — STICK -->
+<div class="step">
+  <div class="num">3</div>
+  <h2>Stick the labels</h2>
+  <p class="cap">SPOT labels on the three positions. BOX labels on the boxes.</p>
+  <div class="illus">
+    <div class="panel">
+      <span class="tag">↓ Floor positions</span>
+      <svg viewBox="0 0 320 130" aria-label="Three spots labelled 1 2 3">
+        <g fill="none" stroke="#1a1a1a" stroke-width="3" stroke-linejoin="round" stroke-dasharray="6 5">
+          <rect x="20" y="30" width="80" height="70" rx="8"/><rect x="120" y="30" width="80" height="70" rx="8"/><rect x="220" y="30" width="80" height="70" rx="8"/>
+        </g>
+        <g font-family="Inter" font-weight="800" font-size="20" text-anchor="middle" fill="#1a1a1a"><text x="60" y="58">SPOT-1</text><text x="160" y="58">SPOT-2</text><text x="260" y="58">SPOT-3</text></g>
+        <g font-family="Inter" font-weight="800" font-size="34" text-anchor="middle" fill="#0058a3"><text x="60" y="92">1</text><text x="160" y="92">2</text><text x="260" y="92">3</text></g>
+      </svg>
+    </div>
+    <div class="panel">
+      <span class="tag">↓ Boxes</span>
+      <svg viewBox="0 0 320 130" aria-label="Box getting a label">
+        <g fill="none" stroke="#1a1a1a" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round">
+          <path d="M60 60 l50 -26 l50 26 l-50 26 z"/><path d="M60 60 v44 l50 26 v-44"/><path d="M160 60 v44 l-50 26"/>
+          <rect x="190" y="44" width="92" height="46" rx="6" fill="#fff"/>
+          <g stroke-width="2.6"><line x1="204" y1="56" x2="204" y2="78"/><line x1="212" y1="56" x2="212" y2="78"/><line x1="220" y1="56" x2="220" y2="78"/><line x1="230" y1="56" x2="230" y2="78"/><line x1="238" y1="56" x2="238" y2="78"/><line x1="248" y1="56" x2="248" y2="78"/><line x1="258" y1="56" x2="258" y2="78"/><line x1="268" y1="56" x2="268" y2="78"/></g>
+          <path d="M188 100 q-30 14 -64 -2" stroke-dasharray="5 5"/><path d="M124 98 l-2 -16 m2 16 l16 -4"/>
+        </g>
+        <text x="236" y="106" font-family="Inter" font-weight="800" font-size="15" text-anchor="middle" fill="#1a1a1a">BOX-A</text>
+      </svg>
+    </div>
+  </div>
+</div>
+
+<!-- STEP 4 — TEST THE GUN -->
+<div class="step">
+  <div class="num">4</div>
+  <h2>Test the scanner</h2>
+  <p class="cap">Open any text box and scan one label. It must type the code AND jump to a new line.</p>
+  <div class="illus">
+    <div class="panel ok">
+      <span class="tag">✓ Correct</span>
+      <svg viewBox="0 0 300 100" aria-label="Code then new line">
+        <g fill="none" stroke="#1a1a1a" stroke-width="3" stroke-linejoin="round"><rect x="20" y="20" width="260" height="62" rx="8"/></g>
+        <text x="36" y="46" font-family="SF Mono,Consolas,monospace" font-weight="700" font-size="18" fill="#1a1a1a">SPOT-1</text>
+        <rect x="36" y="58" width="3" height="16" fill="#2e8b3d"/>
+        <text x="252" y="74" font-family="Inter" font-size="14" fill="#2e8b3d">⏎</text>
+      </svg>
+    </div>
+    <div class="panel no">
+      <span class="tag">✗ Wrong</span>
+      <svg viewBox="0 0 300 100" aria-label="Code but no new line">
+        <g fill="none" stroke="#1a1a1a" stroke-width="3" stroke-linejoin="round"><rect x="20" y="20" width="260" height="62" rx="8"/></g>
+        <text x="36" y="56" font-family="SF Mono,Consolas,monospace" font-weight="700" font-size="18" fill="#1a1a1a">SPOT-1</text>
+        <rect x="116" y="42" width="3" height="16" fill="#d62c1a"/>
+      </svg>
+      <p style="margin:2px 0 0;font-size:13.5px;font-weight:600;color:#7a1c12">No new line? Turn on the <b>Enter / CR suffix</b> in the scanner’s own settings.</p>
+    </div>
+  </div>
+</div>
+
+<!-- STEP 5 — SCAN -->
+<div class="step">
+  <div class="num">5</div>
+  <h2>Scan: spot → box</h2>
+  <p class="cap">Scan the position, then the box. Right box = green. Wrong box = red + beep.</p>
+  <div class="illus">
+    <div class="panel ok">
+      <span class="tag">✓ Right box</span>
+      <svg viewBox="0 0 320 120" aria-label="SPOT-1 then BOX-A gives green">
+        <g fill="none" stroke="#1a1a1a" stroke-width="3" stroke-linejoin="round" stroke-linecap="round">
+          <rect x="14" y="40" width="70" height="40" rx="6"/><line x1="92" y1="60" x2="128" y2="60"/><path d="M128 60 l-12 -7 m12 7 l-12 7"/>
+          <rect x="136" y="40" width="70" height="40" rx="6"/><line x1="214" y1="60" x2="250" y2="60"/><path d="M250 60 l-12 -7 m12 7 l-12 7"/>
+          <rect x="258" y="34" width="52" height="52" rx="8"/><path d="M270 60 l10 10 l20 -24" stroke="#2e8b3d" stroke-width="5"/>
+        </g>
+        <g font-family="Inter" font-weight="800" font-size="13" text-anchor="middle" fill="#1a1a1a"><text x="49" y="64">SPOT-1</text><text x="171" y="64">BOX-A</text></g>
+      </svg>
+    </div>
+    <div class="panel no">
+      <span class="tag">✗ Wrong box</span>
+      <svg viewBox="0 0 320 120" aria-label="SPOT-1 then BOX-B gives red">
+        <g fill="none" stroke="#1a1a1a" stroke-width="3" stroke-linejoin="round" stroke-linecap="round">
+          <rect x="14" y="40" width="70" height="40" rx="6"/><line x1="92" y1="60" x2="128" y2="60"/><path d="M128 60 l-12 -7 m12 7 l-12 7"/>
+          <rect x="136" y="40" width="70" height="40" rx="6"/><line x1="214" y1="60" x2="250" y2="60"/><path d="M250 60 l-12 -7 m12 7 l-12 7"/>
+          <rect x="258" y="34" width="52" height="52" rx="8"/><path d="M270 46 l28 28 M298 46 l-28 28" stroke="#d62c1a" stroke-width="5"/>
+        </g>
+        <g font-family="Inter" font-weight="800" font-size="13" text-anchor="middle" fill="#1a1a1a"><text x="49" y="64">SPOT-1</text><text x="171" y="64">BOX-B</text></g>
+      </svg>
+    </div>
+  </div>
+</div>
+
+<div class="mascot">
+  <svg viewBox="0 0 60 80" aria-label="Done">
+    <g fill="none" stroke="#0058a3" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round">
+      <circle cx="30" cy="16" r="11"/><path d="M30 27 v26 M30 36 l-16 6 M30 36 l16 -8 M30 53 l-12 22 M30 53 l12 22"/><path d="M44 24 l6 -2 v-8" stroke="#2e8b3d"/>
+    </g>
+  </svg>
+  <div>Done! No barcode gun handy? Type a code straight into <code>Devices\Scanner.Value</code> in the bOS Configurator to fake a scan.</div>
+</div>
+
+</div>
+
+<script>
+/* ---- Code 128 encoder (Code B), self-contained ---- */
+const PAT=["212222","222122","222221","121223","121322","131222","122213","122312","132212","221213","221312","231212","112232","122132","122231","113222","123122","123221","223211","221132","221231","213212","223112","312131","311222","321122","321221","312212","322112","322211","212123","212321","232121","111323","131123","131321","112313","132113","132311","211313","231113","231311","112133","112331","132131","113123","113321","133121","313121","211331","231131","213113","213311","213131","311123","311321","331121","312113","312311","332111","314111","221411","431111","111224","111422","121124","121421","141122","141221","112214","112412","122114","122411","142112","142211","241211","221114","413111","241112","134111","111242","121142","121241","114212","124112","124211","411212","421112","421211","212141","214121","412121","111143","111341","131141","114113","114311","411113","411311","113141","114131","311141","411131","211412","211214","211232","2331112"];
+const START_B=104, STOP=106, QUIET=10;
+function encode128B(data){
+  let values=[START_B], sum=START_B;
+  for(let i=0;i<data.length;i++){
+    const v=data.charCodeAt(i)-32;
+    if(v<0||v>94) throw new Error("Unsupported char: "+data[i]);
+    values.push(v); sum+=v*(i+1);
+  }
+  values.push(sum%103); values.push(STOP);
+  return values;
+}
+function barcodeSVG(data, module=2, height=70){
+  let values;
+  try{ values=encode128B(data); }catch(e){ return '<div style="color:#d62c1a;font-size:13px">'+e.message+'</div>'; }
+  let pat=""; values.forEach(v=>pat+=PAT[v]);
+  let total=QUIET*2; for(const c of pat) total+=parseInt(c,10);
+  const w=total*module;
+  let x=QUIET*module, bar=true, rects="";
+  for(const c of pat){ const ww=parseInt(c,10)*module;
+    if(bar) rects+=`<rect x="${x}" y="0" width="${ww}" height="${height}" fill="#1a1a1a"/>`;
+    x+=ww; bar=!bar; }
+  return `<svg viewBox="0 0 ${w} ${height}" width="${w}" height="${height}" shape-rendering="crispEdges" role="img" aria-label="barcode ${data}"><rect width="${w}" height="${height}" fill="#fff"/>${rects}</svg>`;
+}
+/* ---- fixed set of labels (no adding) ---- */
+const CODES=["SPOT-1","SPOT-2","SPOT-3","BOX-A","BOX-B","BOX-C"];
+let module=2;
+const grid=document.getElementById('grid');
+function render(){
+  grid.innerHTML='';
+  CODES.forEach(code=>{
+    const div=document.createElement('div'); div.className='label';
+    div.innerHTML=`<div class="lcap">${code.startsWith('SPOT')?'Position':'Box'}</div>`
+      +barcodeSVG(code,module)
+      +`<div class="txt">${code}</div>`;
+    grid.appendChild(div);
+  });
+}
+document.getElementById('print').onclick=()=>window.print();
+document.getElementById('size').addEventListener('input',e=>{module=+e.target.value;document.getElementById('sizev').textContent=module;render();});
+render();
+</script>
+</body></html>
