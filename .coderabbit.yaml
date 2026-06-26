@@ -1,0 +1,28 @@
+# CodeRabbit configuration — https://docs.coderabbit.ai/reference/configuration
+# Requires the CodeRabbit GitHub App to be installed on this repo/owner.
+language: en-US
+early_access: false
+reviews:
+  profile: assertive
+  request_changes_workflow: false
+  high_level_summary: true
+  review_status: true
+  poem: false
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - main
+  path_instructions:
+    - path: "hyperion/src-tauri/**/*.rs"
+      instructions: >-
+        Rust Tauri core. Flag any lock held across a blocking call or await,
+        unbounded subprocess/HTTP, secret or API key leaking into logs/errors,
+        shell/argument injection, and panics on attacker-influenced input.
+        This app is strictly read-only toward the bOS system.
+    - path: "hyperion/**/*.{ts,html}"
+      instructions: >-
+        Webview (Vite/TS). Flag any innerHTML of un-escaped model/user/.bos
+        content (XSS) and any secret rendered to the DOM.
+chat:
+  auto_reply: true

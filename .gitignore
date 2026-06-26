@@ -35,3 +35,7 @@ hyperion-projects/
 *.db-wal
 *.sqlite
 vault.bin
+
+# Customer/sample bOS exports & parsed maps — never publish (kept locally for dev)
+*.bos
+bos_map.json
