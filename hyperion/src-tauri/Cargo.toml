@@ -25,4 +25,12 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Bundled SQLite (compiled from source) — the per-project store. No system lib needed.
 rusqlite = { version = "0.32", features = ["bundled"] }
+# Encrypted vault (Phase 1, M6): AES-256-GCM at rest, data-encryption key in the
+# OS keychain. `windows-native` is the only backend enabled for the current build
+# target; add `apple-native` / `sync-secret-service` when building for macOS/Linux.
+aes-gcm = "0.10"
+keyring = { version = "3", features = ["windows-native"] }
+rand = "0.8"
+base64 = "0.22"
+zeroize = { version = "1", features = ["derive"] }
 

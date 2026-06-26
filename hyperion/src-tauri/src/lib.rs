@@ -9,6 +9,7 @@
 // Strictly read-only with respect to the bOS system — never writes to it.
 
 mod projects;
+mod vault;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -18,6 +19,7 @@ use serde_json::{json, Value};
 use tauri::State;
 
 use projects::Projects;
+use vault::Vault;
 
 /// In-memory model of one loaded project workspace.
 struct Store {
@@ -481,16 +483,89 @@ fn import_bos(
     Ok(json!({ "snapshot_id": id, "view": project_view(&p) }))
 }
 
+// ----------------------------- vault commands -----------------------------
+
+/// Vault status (exists / unlocked / secret count) — never returns values.
+#[tauri::command]
+fn vault_status(vault: State<'_, Mutex<Vault>>) -> Value {
+    vault.lock().unwrap_or_else(|e| e.into_inner()).status()
+}
+
+/// Unlock the vault using the OS-keychain DEK (Phase 1 step 2 gates this behind
+/// Entra SSO). Idempotent; creates an empty vault on first unlock.
+#[tauri::command]
+fn vault_unlock(vault: State<'_, Mutex<Vault>>) -> Result<Value, String> {
+    let mut v = vault.lock().unwrap_or_else(|e| e.into_inner());
+    v.unlock()?;
+    Ok(v.status())
+}
+
+/// Lock the vault, zeroizing the in-memory DEK.
+#[tauri::command]
+fn vault_lock(vault: State<'_, Mutex<Vault>>) -> Value {
+    let mut v = vault.lock().unwrap_or_else(|e| e.into_inner());
+    v.lock();
+    v.status()
+}
+
+/// Sorted secret names (never values).
+#[tauri::command]
+fn vault_list_secrets(vault: State<'_, Mutex<Vault>>) -> Result<Vec<String>, String> {
+    vault.lock().unwrap_or_else(|e| e.into_inner()).names()
+}
+
+/// Insert or replace a secret. The plaintext value never leaves this process
+/// except via `vault_reveal_secret`.
+#[tauri::command]
+fn vault_set_secret(
+    name: String,
+    value: String,
+    vault: State<'_, Mutex<Vault>>,
+) -> Result<(), String> {
+    vault
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .set(&name, &value)
+}
+
+/// Remove a secret. Returns whether it existed.
+#[tauri::command]
+fn vault_delete_secret(name: String, vault: State<'_, Mutex<Vault>>) -> Result<bool, String> {
+    vault
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .delete(&name)
+}
+
+/// Reveal a single secret's raw value (requires unlocked). Use sparingly.
+#[tauri::command]
+fn vault_reveal_secret(name: String, vault: State<'_, Mutex<Vault>>) -> Result<String, String> {
+    vault
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .reveal(&name)
+}
+
+/// Plaintext-secret guardrail: scan text for credentials that belong in the
+/// vault. Returns masked findings (the scan never echoes a raw secret).
+#[tauri::command]
+fn scan_secret(text: String) -> Vec<Value> {
+    vault::scan_for_secrets(&text)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let workspace = default_workspace();
     let store = build_store(workspace.clone());
-    let projects = Projects::new(projects::default_root(&workspace));
+    let projects_root = projects::default_root(&workspace);
+    let vault = Vault::new(vault::default_path(&projects_root));
+    let projects = Projects::new(projects_root);
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(Mutex::new(store))
         .manage(Mutex::new(projects))
+        .manage(Mutex::new(vault))
         .invoke_handler(tauri::generate_handler![
             app_state,
             get_tree,
@@ -502,7 +577,15 @@ pub fn run() {
             create_project,
             current_project,
             open_project,
-            import_bos
+            import_bos,
+            vault_status,
+            vault_unlock,
+            vault_lock,
+            vault_list_secrets,
+            vault_set_secret,
+            vault_delete_secret,
+            vault_reveal_secret,
+            scan_secret
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

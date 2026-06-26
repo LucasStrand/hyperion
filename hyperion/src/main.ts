@@ -19,6 +19,15 @@ const api = {
   openProject:(id) => invoke("open_project", { id }),
   curProject:() => invoke("current_project"),
   importBos: (path, label) => invoke("import_bos", { path, label }),
+  // encrypted vault (src-tauri/src/vault.rs)
+  vaultStatus: () => invoke("vault_status"),
+  vaultUnlock: () => invoke("vault_unlock"),
+  vaultLock:   () => invoke("vault_lock"),
+  vaultList:   () => invoke("vault_list_secrets"),
+  vaultSet:    (name, value) => invoke("vault_set_secret", { name, value }),
+  vaultDelete: (name) => invoke("vault_delete_secret", { name }),
+  vaultReveal: (name) => invoke("vault_reveal_secret", { name }),
+  scanSecret:  (text) => invoke("scan_secret", { text }),
 };
 
 const $ = (s) => document.querySelector(s), $$ = (s) => [...document.querySelectorAll(s)];
@@ -320,8 +329,55 @@ function gotoStep(i){STEP=i; const s=(PB.steps||[])[i]; if(!s)return;
 function closeGuide(){$('#guide').style.display='none';$('#pbsel').value='';
   $$('.tn.guide').forEach(x=>x.classList.remove('guide')); ACTIVE_HL=null; if(CUR) renderPanel();}
 
+// ---------- secrets vault (src-tauri/src/vault.rs) ----------
+function renderVaultStatus(st){
+  const unlocked = !!(st && st.unlocked);
+  const el=$('#vstatus');
+  el.className='vstat '+(unlocked?'unlocked':'locked');
+  el.textContent = unlocked
+    ? ('Unlocked'+(st.count>=0?(' · '+st.count+' secret'+(st.count===1?'':'s')):''))
+    : (st && st.exists ? 'Locked' : 'Locked (empty)');
+  $('#vunlock').disabled = unlocked;
+  $('#vlock').disabled   = !unlocked;
+  $('#vname').disabled = $('#vval').disabled = $('#vsave').disabled = !unlocked;
+}
+async function refreshVault(){
+  let st; try{ st=await api.vaultStatus(); }catch(e){ st={exists:false,unlocked:false,count:-1}; }
+  renderVaultStatus(st);
+  const list=$('#vlist');
+  if(!st.unlocked){ list.innerHTML='<div class="mut" style="padding:8px">Unlock to view secret names.</div>'; return; }
+  let names=[]; try{ names=await api.vaultList(); }catch(e){ names=[]; }
+  list.innerHTML = names.length
+    ? names.map(n=>'<div class="vi"><span>'+esc(n)+'</span><span>'
+        +'<span class="rev" data-n="'+esc(n)+'">reveal</span>'
+        +'<span class="del" data-n="'+esc(n)+'">delete</span></span></div>').join('')
+    : '<div class="mut" style="padding:8px">No secrets yet.</div>';
+  $$('#vlist .del').forEach(b=>b.onclick=async()=>{
+    if(!confirm('Delete secret "'+b.dataset.n+'"?')) return;
+    try{ await api.vaultDelete(b.dataset.n); await refreshVault(); }catch(e){ alert('Delete failed: '+e); }});
+  $$('#vlist .rev').forEach(b=>b.onclick=async()=>{
+    try{ const v=await api.vaultReveal(b.dataset.n); alert(b.dataset.n+' = '+v); }catch(e){ alert('Reveal failed: '+e); }});
+}
+function openVault(){ $('#vault').classList.add('on'); refreshVault(); }
+function closeVault(){ $('#vault').classList.remove('on'); }
+async function saveSecret(){
+  const n=$('#vname').value.trim(), v=$('#vval').value;
+  if(!n){ alert('Enter a secret name.'); return; }
+  try{ await api.vaultSet(n,v); $('#vname').value=''; $('#vval').value=''; await refreshVault(); }
+  catch(e){ alert('Save failed: '+e); }
+}
+async function scanGuard(){
+  const t=$('#vscantext').value; let hits=[];
+  try{ hits=await api.scanSecret(t); }catch(e){ hits=[]; }
+  $('#vscanout').innerHTML = hits.length
+    ? '<span class="hit">&#9888; '+hits.length+' possible secret'+(hits.length===1?'':'s')
+      +' &mdash; store in the vault, not in plaintext:</span><br>'
+      +hits.map(h=>esc(h.kind)+' <span class="mut">('+esc(h.detail)+')</span>').join('<br>')
+    : '<span class="clean">&#10003; No obvious secrets found.</span>';
+}
+
 // expose handlers referenced by inline onclick="" attributes
-Object.assign(window, { navigate, gotoStep, closeGuide, showNode, showDiff });
+Object.assign(window, { navigate, gotoStep, closeGuide, showNode, showDiff, closeVault });
 
 // ---------- config render (state + tree); reused after a project/snapshot change ----------
 async function renderConfig(){
@@ -402,5 +458,13 @@ async function init(){
   $('#projsel').onchange=e=>openProjectById(e.target.value);
   $('#projnew').onclick=newProject;
   $('#projimport').onclick=importBos;
+
+  // vault
+  $('#vaultbtn').onclick=openVault;
+  $('#vunlock').onclick=async()=>{ try{ await api.vaultUnlock(); await refreshVault(); }catch(e){ alert('Unlock failed: '+e); } };
+  $('#vlock').onclick=async()=>{ try{ await api.vaultLock(); await refreshVault(); }catch(e){ alert(e); } };
+  $('#vsave').onclick=saveSecret;
+  $('#vscanbtn').onclick=scanGuard;
+  $('#vault').addEventListener('click',e=>{ if(e.target.id==='vault') closeVault(); });
 }
 init();

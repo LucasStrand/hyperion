@@ -131,6 +131,27 @@ display:flex;align-items:center;gap:6px}
 .ba b{color:#1a7f37;background:#e6ffec;padding:0 3px;border-radius:2px}
 .ba .arr{color:var(--mut);margin:0 5px}
 .hl-warn{display:inline-block;margin-left:8px;font-size:11px;font-weight:700;color:#b3261e;background:#ffe3df;border:1px solid #f3b4ad;border-radius:10px;padding:1px 8px;vertical-align:middle;white-space:normal}
+/* secrets vault (Phase 1, M6) */
+.vmodal{position:fixed;inset:0;background:rgba(20,28,38,.45);display:none;align-items:center;justify-content:center;z-index:50}
+.vmodal.on{display:flex}
+.vbox{width:520px;max-height:82vh;overflow:auto;background:#fff;border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 30px rgba(0,0,0,.28)}
+.vh{background:#2b3a4a;color:#dfe8f1;padding:8px 12px;font-weight:600;display:flex;align-items:center;gap:8px}
+.vh .x{margin-left:auto;cursor:pointer}
+.vstat{font-size:11px;font-weight:700;padding:1px 8px;border-radius:10px}
+.vstat.locked{background:#ffe3df;color:#b3261e} .vstat.unlocked{background:#e6ffec;color:#1a7f37}
+.vb{padding:10px 12px;display:flex;flex-direction:column;gap:10px}
+.vrow{display:flex;align-items:center;gap:8px}
+.vlist{border:1px solid var(--line);border-radius:4px;min-height:40px}
+.vlist .vi{display:flex;align-items:center;justify-content:space-between;padding:4px 8px;border-bottom:1px solid #eef1f5}
+.vlist .vi:last-child{border:none}
+.vlist .vi .del{color:#b3261e;cursor:pointer;font-size:12px;margin-left:10px}
+.vlist .vi .rev{color:var(--acc);cursor:pointer;font-size:12px}
+.vadd{display:flex;gap:6px} .vadd input{flex:1;padding:4px 8px;border:1px solid var(--line);border-radius:4px}
+.vadd input:disabled{background:#f3f5f8}
+.vscan{border-top:1px dashed var(--line);padding-top:8px}
+.vscan textarea{width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:4px;font-family:Consolas,ui-monospace,monospace;font-size:12px;margin:4px 0}
+.vscan .hit{color:#b3261e;font-weight:600}
+.vscan .clean{color:#1a7f37;font-weight:600}
 </style>
 <script type="module" src="/src/main.ts"></script>
 </head>
@@ -148,6 +169,7 @@ display:flex;align-items:center;gap:6px}
   <label class="mut" style="font-size:12px">Guide:
     <select id="pbsel"><option value="">- none -</option></select>
   </label>
+  <button id="vaultbtn" class="appbtn" title="Encrypted secrets vault">&#128274; Vault</button>
   <span class="ham">&#9776;</span>
 </div>
 <div class="toolbar">
@@ -171,5 +193,31 @@ display:flex;align-items:center;gap:6px}
 <div id="guide">
   <div class="gh"><span id="gtitle">Guide</span><span id="gsummary"></span><span class="x" onclick="closeGuide()">&#10005;</span></div>
   <div class="gb" id="gbody"></div>
+</div>
+
+<div id="vault" class="vmodal">
+  <div class="vbox">
+    <div class="vh">&#128274; Secrets Vault <span id="vstatus" class="vstat locked">Locked</span>
+      <span class="x" onclick="closeVault()">&#10005;</span></div>
+    <div class="vb">
+      <div class="vrow">
+        <button id="vunlock" class="appbtn">Unlock</button>
+        <button id="vlock" class="appbtn">Lock</button>
+        <span class="mut" id="vhint">AES-256-GCM at rest &middot; key in OS keychain</span>
+      </div>
+      <div id="vlist" class="vlist"></div>
+      <div class="vadd">
+        <input id="vname" placeholder="name (e.g. bos-main-login)" disabled>
+        <input id="vval" type="password" placeholder="secret value" disabled>
+        <button id="vsave" class="appbtn" disabled>Save</button>
+      </div>
+      <div class="vscan">
+        <div class="mut">Guardrail &mdash; paste text to check before storing it as plaintext context:</div>
+        <textarea id="vscantext" rows="3" placeholder="paste config / notes&hellip;"></textarea>
+        <button id="vscanbtn" class="appbtn">Scan for secrets</button>
+        <div id="vscanout" class="mut" style="margin-top:6px"></div>
+      </div>
+    </div>
+  </div>
 </div>
 </body></html>
