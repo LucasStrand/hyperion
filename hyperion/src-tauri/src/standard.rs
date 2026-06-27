@@ -112,7 +112,9 @@ fn audit_file(path: &str, contents: &str, lang: Lang, out: &mut Vec<Finding>) {
     for (idx, line) in contents.lines().enumerate() {
         let line_no = idx + 1;
 
-        if lang == Lang::Rust && line.contains("#[cfg(test)]") {
+        // Only a real attribute flips us into the test region — a comment that
+        // merely mentions `#[cfg(test)]` must not suppress later findings.
+        if lang == Lang::Rust && line.contains("#[cfg(test)]") && !is_comment_line(line) {
             in_test = true;
         }
 
