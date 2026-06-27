@@ -114,7 +114,22 @@ pub fn scan_source(files: &[(String, String)]) -> Vec<Finding> {
             lang => scan_file(path, contents, lang, &mut out),
         }
     }
-    out
+    dedup_findings(out)
+}
+
+/// Collapse findings that repeat the same `(path, line, kind)` to a single hit,
+/// preserving first-seen order. A single line can match two rules of the same
+/// kind — e.g. `Authorization: "Bearer sk-…"` trips both the structural secret
+/// heuristic and the bare vendor-prefix check — and without this the enterprise
+/// gate would count one secret twice and inflate the blocking total. `(path,
+/// line, kind)` (not just `(line, kind)`) keeps identical line numbers in
+/// different files independent.
+fn dedup_findings(findings: Vec<Finding>) -> Vec<Finding> {
+    let mut seen = std::collections::HashSet::new();
+    findings
+        .into_iter()
+        .filter(|f| seen.insert((f.path.clone(), f.line, f.kind)))
+        .collect()
 }
 
 fn scan_file(path: &str, contents: &str, lang: Lang, out: &mut Vec<Finding>) {
@@ -429,6 +444,25 @@ mod tests {
         let ts = "const h = {\n  Authorization: \"Bearer abcdef0123456789xyz\",\n};\n";
         let g = scan_source(&[("src/api.ts".into(), ts.into())]);
         assert!(has(&g, "hardcoded-secret"), "got: {:?}", kinds(&g));
+    }
+
+    #[test]
+    fn deduplicates_a_doubly_matching_secret_line() {
+        // `Authorization: "Bearer sk-or-…"` trips both the structural secret
+        // heuristic and the bare vendor-prefix check on the same line. The line
+        // must yield exactly one `hardcoded-secret`, so the gate counts it once.
+        let rs = "fn run() {\n    let h = \"Authorization: Bearer sk-or-v1-abc123def456ghi789jkl012\";\n}\n";
+        let f = scan_source(&[("src-tauri/src/lib.rs".into(), rs.into())]);
+        let secrets: Vec<&Finding> = f
+            .iter()
+            .filter(|x| x.kind == HARDCODED_SECRET_KIND && x.line == 2)
+            .collect();
+        assert_eq!(
+            secrets.len(),
+            1,
+            "doubly-matching line must collapse to one finding, got: {secrets:?}"
+        );
+        assert_eq!(plaintext_secret_count(&f), 1);
     }
 
     #[test]

@@ -143,6 +143,16 @@
 .atools .atoolchip.mcp .atoolkind { background: #eef2fb; color: #1f6fc4; }
 [data-theme="dark"] .atools { background: var(--pan); }
 [data-theme="dark"] .atools .atoolchip { background: var(--pan2); color: var(--ink); }
+/* The inner skill/mcp badge hardcodes light swatches (#eaf7f0 / #eef2fb); repaint
+ * it with dark-appropriate tints so it reads on the dark chip instead of glaring. */
+[data-theme="dark"] .atools .atoolchip .atoolkind {
+  background: rgba(108, 192, 112, .15);
+  color: var(--cmt);
+}
+[data-theme="dark"] .atools .atoolchip.mcp .atoolkind {
+  background: rgba(90, 162, 230, .15);
+  color: var(--acc);
+}
 
 /* ---- Wiki editor component (theme-agnostic; new selectors only) ---- */
 .wikied { display: flex; flex-direction: column; gap: 10px; }
