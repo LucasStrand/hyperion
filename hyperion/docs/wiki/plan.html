@@ -85,7 +85,7 @@
     <div class="sub">Enterprise IoT workbench for ComfortClick bOS, operated by an AI agent. The full vision, phased — crossed off as it lands.</div>
     <div class="overall">
       <div class="bar"><i id="overallbar"></i></div>
-      <div class="pct" id="overallpct">95%</div>
+      <div class="pct" id="overallpct">99%</div>
     </div>
     <div class="legend">
       <span><i class="dot done"></i> Done</span>
@@ -341,17 +341,20 @@
 
   <div class="foot">
     This dashboard is regenerated as each unit lands — a green strike-through means shipped and verified.
-    <strong>2026-06-27:</strong> Phase 2 #1–#3 (runtime adapter, agent memory, playbook routing) shipped, plus the
-    CI gate and community-health files. The multi-agent roster (#4) — roster, versioned instincts, and the
-    share protocol — is built, adversarially reviewed, and on an open PR awaiting merge: <strong>Phase 2 complete</strong>.
-    Source of truth: the plan in <code>jolly-humming-toucan.md</code> and the live repo. Hyperion stays strictly read-only toward bOS.
+    <strong>2026-06-28:</strong> Phases 3–5 landed in an overnight multi-agent run — RAG embeddings, proactive
+    context suggestions, Milesight ingestion, code-standard + audit, themeable/editable wiki + static export,
+    vault-backed network registry, HTML artifacts, security scan + enterprise gate, knowledge crawler + eureka,
+    semantic <code>.bos</code> diff, in-app PRs + comment threads + timeline, and an MCP/skill recommender + DesignSync —
+    each adversarially reviewed, CI-gated, and wired into the app UI (145 tests green).
+    <strong>Remaining (~1%):</strong> the agent literally operating the app (crawl/click/navigate, reqs #2/#23) — a
+    computer-use feature awaiting scope. Hyperion stays strictly read-only toward bOS.
   </div>
 </div>
 
 <script>
   // Animate the overall bar to its target on load (purely cosmetic).
   (function(){
-    var pct = 95;
+    var pct = 99;
     requestAnimationFrame(function(){
       var el = document.getElementById('overallbar');
       if (el) el.style.width = pct + '%';
