@@ -58,8 +58,9 @@
                                                           │
    ask a question ──► keyword-rank chunks ──► top matches ─┘──► fenced as UNTRUSTED in the prompt</div>
   <ul>
-    <li><b>Extract</b> &mdash; text/Markdown/CSV/TSV/log/JSON/YAML/XML/INI today; PDF &amp; Word land in a
-      later unit. Binary/office files are rejected with a clear message. Max 4&nbsp;MB per file.</li>
+    <li><b>Extract</b> &mdash; text/Markdown/CSV/TSV/log/JSON/YAML/XML/INI, plus <b>PDF</b> (content stream)
+      and <b>Word <code>.docx</code></b> (the WordprocessingML body). Other binary/office formats (xlsx, images)
+      are still rejected with a clear message. Max 4&nbsp;MB per file.</li>
     <li><b>Chunk</b> &mdash; split into ~1500-character pieces on line boundaries, with a small overlap so a
       fact straddling a boundary stays findable. Unicode-correct; always terminates.</li>
     <li><b>Retrieve</b> &mdash; a dependency-free keyword overlap ranks chunks against the question and the
@@ -74,7 +75,22 @@
     agent's standing instincts name that fence explicitly and refuse to follow anything inside it. A chunk
     containing <code>&lt;/context-files&gt;</code> can't break out, because the delimiters are encoded.</div>
   <p>Ingested files are stored only in the local project database and are never written back to bOS. As with
-    memory, secrets don't belong here &mdash; they live in the encrypted <a href="vault.html">Vault</a>.</p>
+    memory, secrets don't belong here &mdash; they live in the encrypted <a href="vault.html">Vault</a>.
+    (A context file that looks like it carries a plaintext credential is rejected on add, for every format.)</p>
+
+  <h2>Parsing hostile binaries safely</h2>
+  <p>PDF and <code>.docx</code> are binary formats parsed by third-party crates, so a malformed or deliberately
+    hostile file is treated as an attack surface, not just bad input:</p>
+  <ul>
+    <li><b>No crashes.</b> PDF and DOCX extraction run inside a panic boundary &mdash; a parser that panics on a
+      crafted file yields a clean error message instead of taking down the backend.</li>
+    <li><b>No zip bombs.</b> A <code>.docx</code> is a ZIP; decompression of its body is capped (64&nbsp;MB) and
+      an archive with an implausible number of entries is refused, so a tiny file can't inflate to exhaust memory.</li>
+    <li><b>No entity attacks.</b> The XML reader is a streaming parser that doesn't expand external or custom
+      entities, so &ldquo;billion laughs&rdquo;/XXE payloads in a <code>.docx</code> are inert.</li>
+  </ul>
+  <div class="note">Known limit: PDF extraction has no wall-clock timeout yet, so a pathological PDF could run
+    long; the 4&nbsp;MB input cap bounds it, and a parse timeout is tracked for a later unit.</div>
 
   <h2>Commands &amp; storage</h2>
   <table>
