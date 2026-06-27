@@ -312,3 +312,191 @@ pub fn active_snapshot(db: &Path) -> Result<Option<(String, Value)>, String> {
         None => Ok(None),
     }
 }
+
+// ----------------------------- per-project memory (M5) -----------------------------
+//
+// Persistent, operator-authored notes loaded into the agent's grounding so it
+// remembers facts across sessions (e.g. "the main pump is Modbus slave 3"). They
+// live in the forward-compatible `memory` table (id, mtype, slug, body,
+// updated_at). A note is keyed by `slug` and *upserted* (one row per slug). Notes
+// are typed so the UI and the prompt can group them; an unknown type is rejected.
+//
+// Strictly local and read-only toward bOS. Secrets never belong here — they live
+// only in the encrypted vault — and memory is never written into a vault prompt.
+
+/// The four allowed memory categories. `project` = facts about this install,
+/// `feature` = how a built feature works, `reference` = external/datasheet facts,
+/// `security` = security-relevant reminders (never the secret itself).
+pub const MEMORY_TYPES: [&str; 4] = ["project", "feature", "reference", "security"];
+
+/// Is `mtype` one of the allowed categories?
+pub fn valid_mtype(mtype: &str) -> bool {
+    MEMORY_TYPES.contains(&mtype)
+}
+
+/// All memory notes for a project as JSON (id, mtype, slug, body, updated_at),
+/// ordered deterministically by type then slug for a stable UI.
+pub fn memory_list(db: &Path) -> Result<Vec<Value>, String> {
+    let conn = Connection::open(db).map_err(|e| format!("open db: {e}"))?;
+    let mut stmt = conn
+        .prepare("SELECT id, mtype, slug, body, updated_at FROM memory ORDER BY mtype, slug, id")
+        .map_err(|e| format!("{e}"))?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(json!({
+                "id": r.get::<_, i64>(0)?,
+                "mtype": r.get::<_, String>(1)?,
+                "slug": r.get::<_, String>(2)?,
+                "body": r.get::<_, String>(3)?,
+                "updated_at": r.get::<_, String>(4)?,
+            }))
+        })
+        .map_err(|e| format!("{e}"))?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row.map_err(|e| format!("{e}"))?);
+    }
+    Ok(out)
+}
+
+/// Insert or replace a memory note, keyed by its (slugified) `slug`. Validates
+/// `mtype`, requires a non-empty body, and stamps `updated_at = datetime('now')`.
+/// Returns the row id. The forward-compat `memory` table has no `UNIQUE(slug)`,
+/// so this updates-then-inserts rather than relying on `ON CONFLICT`.
+pub fn memory_set(db: &Path, mtype: &str, slug: &str, body: &str) -> Result<i64, String> {
+    if !valid_mtype(mtype) {
+        return Err(format!(
+            "invalid memory type '{mtype}' (expected one of project|feature|reference|security)"
+        ));
+    }
+    let slug = slugify(slug);
+    let body = body.trim();
+    if body.is_empty() {
+        return Err("memory note body cannot be empty".into());
+    }
+    let conn = Connection::open(db).map_err(|e| format!("open db: {e}"))?;
+    let updated = conn
+        .execute(
+            "UPDATE memory SET mtype = ?1, body = ?2, updated_at = datetime('now') WHERE slug = ?3",
+            rusqlite::params![mtype, body, slug],
+        )
+        .map_err(|e| format!("update memory: {e}"))?;
+    if updated > 0 {
+        return conn
+            .query_row(
+                "SELECT id FROM memory WHERE slug = ?1",
+                rusqlite::params![slug],
+                |r| r.get::<_, i64>(0),
+            )
+            .map_err(|e| format!("read memory id: {e}"));
+    }
+    conn.execute(
+        "INSERT INTO memory(mtype, slug, body, updated_at) VALUES (?1, ?2, ?3, datetime('now'))",
+        rusqlite::params![mtype, slug, body],
+    )
+    .map_err(|e| format!("insert memory: {e}"))?;
+    Ok(conn.last_insert_rowid())
+}
+
+/// Delete a memory note by id. Returns whether a row was removed.
+pub fn memory_delete(db: &Path, id: i64) -> Result<bool, String> {
+    let conn = Connection::open(db).map_err(|e| format!("open db: {e}"))?;
+    let n = conn
+        .execute("DELETE FROM memory WHERE id = ?1", rusqlite::params![id])
+        .map_err(|e| format!("delete memory: {e}"))?;
+    Ok(n > 0)
+}
+
+/// Compact `(mtype, body)` pairs for the agent grounding, ordered like
+/// `memory_list`. The caller (lib.rs) labels and token-bounds them; this layer
+/// stays free of prompt formatting.
+pub fn memory_load_for_prompt(db: &Path) -> Result<Vec<(String, String)>, String> {
+    let conn = Connection::open(db).map_err(|e| format!("open db: {e}"))?;
+    let mut stmt = conn
+        .prepare("SELECT mtype, body FROM memory ORDER BY mtype, slug, id")
+        .map_err(|e| format!("{e}"))?;
+    let rows = stmt
+        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+        .map_err(|e| format!("{e}"))?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row.map_err(|e| format!("{e}"))?);
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A fresh, isolated projects root for one test (cleaned up by the caller).
+    fn temp_root(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!(
+            "hyperion_projects_test_{}_{}",
+            std::process::id(),
+            tag
+        ));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// Create a project under a fresh root and return `(root, project.db path)`.
+    fn fresh_db(tag: &str) -> (PathBuf, PathBuf) {
+        let root = temp_root(tag);
+        let summary = create(&root, "Test Project").unwrap();
+        let id = summary.get("id").unwrap().as_str().unwrap().to_string();
+        let db = root.join(&id).join("project.db");
+        (root, db)
+    }
+
+    #[test]
+    fn memory_roundtrip_set_list_delete() {
+        let (root, db) = fresh_db("mem_rt");
+
+        // Set a note; slug is normalized via slugify ("Main Pump" -> "main-pump").
+        let id = memory_set(&db, "project", "Main Pump", "Main pump is Modbus slave 3.").unwrap();
+        assert!(id > 0);
+        let list = memory_list(&db).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0]["mtype"], "project");
+        assert_eq!(list[0]["slug"], "main-pump");
+        assert_eq!(list[0]["body"], "Main pump is Modbus slave 3.");
+
+        // Upsert by slug: same slug updates the existing row (type + body), no dup.
+        let id2 = memory_set(&db, "feature", "main-pump", "Updated note.").unwrap();
+        assert_eq!(id, id2);
+        let list = memory_list(&db).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0]["mtype"], "feature");
+        assert_eq!(list[0]["body"], "Updated note.");
+
+        // Prompt view returns the (mtype, body) pair.
+        let loaded = memory_load_for_prompt(&db).unwrap();
+        assert_eq!(
+            loaded,
+            vec![("feature".to_string(), "Updated note.".to_string())]
+        );
+
+        // Validation: bad type and empty body are rejected.
+        assert!(memory_set(&db, "bogus", "x", "y").is_err());
+        assert!(memory_set(&db, "project", "z", "   ").is_err());
+
+        // Delete is idempotent on the second call.
+        assert!(memory_delete(&db, id).unwrap());
+        assert!(!memory_delete(&db, id).unwrap());
+        assert!(memory_list(&db).unwrap().is_empty());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn valid_mtype_accepts_only_known_categories() {
+        for t in MEMORY_TYPES {
+            assert!(valid_mtype(t));
+        }
+        assert!(!valid_mtype("notes"));
+        assert!(!valid_mtype(""));
+        assert!(!valid_mtype("Project")); // case-sensitive
+    }
+}
