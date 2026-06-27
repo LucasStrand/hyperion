@@ -45,6 +45,11 @@ const api = {
   agentInstinctsSet:     (agentId, body) => invoke("agent_instincts_set", { agentId, body }),
   agentInstinctsHistory: (agentId) => invoke("agent_instincts_history", { agentId }),
   agentInstinctsRevert:  (agentId, version) => invoke("agent_instincts_revert", { agentId, version }),
+
+  // context-file ingestion (src-tauri/src/ingest.rs + projects.rs)
+  contextList:    () => invoke("context_list"),
+  contextAddFile: (path) => invoke("context_add_file", { path }),
+  contextDelete:  (id) => invoke("context_delete", { id }),
 };
 
 const $ = (s) => document.querySelector(s), $$ = (s) => [...document.querySelectorAll(s)];
@@ -428,7 +433,7 @@ async function refreshAgentStatus(){
     else { b.textContent='no runtime'; b.classList.add('off'); }
   }catch(e){ b.textContent='status error'; b.classList.add('off'); }
 }
-function openAgent(){ $('#agent').classList.add('on'); refreshAgentStatus(); refreshRoster(); if(memOpen) refreshMemory(); $('#aq').focus(); }
+function openAgent(){ $('#agent').classList.add('on'); refreshAgentStatus(); refreshRoster(); if(memOpen) refreshMemory(); if(ctxOpen) refreshContext(); $('#aq').focus(); }
 function closeAgent(){ $('#agent').classList.remove('on'); }
 // Minimal renderer: escape everything, then turn ``` fenced blocks into <pre>.
 // A ```playbook fence is tagged and gets a "Load playbook" button that routes the
@@ -639,6 +644,52 @@ async function showInstinctHistory(){
   }catch(e){ box.innerHTML='<div class="pberr">'+esc(''+e)+'</div>'; }
 }
 
+// ---------- context files (Phase 3, M1) ----------
+// Ingested reference material (datasheets, Milesight CSV exports) the co-pilot
+// retrieves from on every ask. Add a text/markdown/CSV/JSON file via the OS file
+// picker; it is extracted, chunked, and stored per project. Escape everything.
+let ctxOpen=false;
+function toggleCtx(){
+  ctxOpen=!ctxOpen;
+  $('#agentctx').classList.toggle('open',ctxOpen);
+  $('#actxbody').style.display=ctxOpen?'block':'none';
+  if(ctxOpen) refreshContext();
+}
+async function refreshContext(){
+  const list=$('#actxlist'); let files=[];
+  try{ files=await api.contextList(); }catch(e){ files=[]; }
+  $('#actxcount').textContent = files.length ? (files.length+' file'+(files.length===1?'':'s')) : '';
+  if(!files.length){
+    list.innerHTML='<div class="mut" style="font-size:12px;padding:4px 2px">No context files yet. Add a datasheet, a Milesight CSV export, or notes — the co-pilot retrieves from them on every ask. Open a project first.</div>';
+    return;
+  }
+  list.innerHTML=files.map(f=>'<div class="actxitem"><div class="mtop">'
+    +'<span class="actxkind">'+esc(f.kind||'?')+'</span>'
+    +'<span class="actxname">'+esc(f.name)+'</span>'
+    +'<span class="mdel" data-id="'+esc(f.id)+'">delete</span></div>'
+    +'<div class="actxmeta mut">'+esc(f.chunks)+' chunk'+(f.chunks===1?'':'s')+' · '+fmtBytes(f.bytes)+'</div></div>').join('');
+  $$('#actxlist .mdel').forEach(b=>b.onclick=async()=>{
+    if(!confirm('Remove this context file? The co-pilot will no longer retrieve from it.')) return;
+    try{ await api.contextDelete(Number(b.dataset.id)); await refreshContext(); }
+    catch(e){ alert('Delete failed: '+e); }});
+}
+function fmtBytes(n){ n=Number(n)||0; if(n<1024) return n+' B'; if(n<1048576) return (n/1024).toFixed(1)+' KB'; return (n/1048576).toFixed(1)+' MB'; }
+async function addContextFile(){
+  let path;
+  try{
+    path=await openFileDialog({ multiple:false, title:'Add a context file',
+      filters:[{ name:'Text/CSV/Markdown/JSON', extensions:['txt','md','markdown','csv','tsv','log','json','yaml','yml','xml','ini','cfg','conf'] }] });
+  }catch(e){ alert('Could not open the file picker: '+e); return; }
+  if(!path) return;
+  const btn=$('#actxadd'); btn.disabled=true; btn.textContent='Adding…';
+  try{
+    const r=await api.contextAddFile(path);
+    await refreshContext();
+    addMsg('note', 'Added "'+r.name+'" ('+r.chunks+' chunk'+(r.chunks===1?'':'s')+') to project context.');
+  }catch(e){ alert('Add file failed: '+e); }
+  finally{ btn.disabled=false; btn.textContent='Add file…'; }
+}
+
 Object.assign(window, { navigate, gotoStep, closeGuide, showNode, showDiff, closeVault, closeAgent, loadPlaybookFromBlock });
 
 // ---------- config render (state + tree); reused after a project/snapshot change ----------
@@ -748,6 +799,9 @@ async function init(){
   $('#arossave').onclick=saveInstincts;
   $('#arosrevert').onclick=revertInstincts;
   $('#aroshistbtn').onclick=showInstinctHistory;
+  // context files (collapsible)
+  $('#actxtoggle').onclick=toggleCtx;
+  $('#actxadd').onclick=addContextFile;
   refreshAgentStatus();
   refreshRoster();
 }

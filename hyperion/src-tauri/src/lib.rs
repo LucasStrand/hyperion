@@ -10,6 +10,7 @@
 
 mod agent;
 mod entra;
+mod ingest;
 mod projects;
 mod roster;
 mod vault;
@@ -593,6 +594,50 @@ fn agent_instincts_revert(
     Ok(json!({ "version": new_version }))
 }
 
+// ----------------------------- context files (M1) -----------------------------
+//
+// Ingested reference material the agent retrieves from on every ask (ingest.rs +
+// projects.rs). Per-project, so all three require an open project. Reading the file
+// off disk happens here (the webview passes a path picked via the OS dialog); the
+// content stays local and is only ever spliced into the prompt as fenced, encoded,
+// untrusted data.
+
+/// List the active project's ingested context files (metadata only, never content).
+#[tauri::command]
+fn context_list(projects: State<'_, Mutex<Projects>>) -> Result<Vec<Value>, String> {
+    let db = active_project_db(&projects)?;
+    projects::context_list(&db)
+}
+
+/// Ingest a file (by absolute path) into the active project: read it, extract text,
+/// chunk, and store. Returns `{id, name, kind, chunks}`. Rejects unsupported kinds.
+#[tauri::command]
+fn context_add_file(path: String, projects: State<'_, Mutex<Projects>>) -> Result<Value, String> {
+    let db = active_project_db(&projects)?;
+    let p = Path::new(&path);
+    let name = p
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| "could not read the file name".to_string())?;
+    // Bound the read so a huge/binary file can't be slurped before validation.
+    let meta = std::fs::metadata(p).map_err(|e| format!("read file: {e}"))?;
+    if meta.len() as usize > ingest::MAX_FILE_BYTES {
+        return Err(format!(
+            "file is too large (max {} MB)",
+            ingest::MAX_FILE_BYTES / (1024 * 1024)
+        ));
+    }
+    let bytes = std::fs::read(p).map_err(|e| format!("read file: {e}"))?;
+    projects::context_add(&db, name, &bytes)
+}
+
+/// Delete an ingested context file (and its chunks) by id from the active project.
+#[tauri::command]
+fn context_delete(id: i64, projects: State<'_, Mutex<Projects>>) -> Result<bool, String> {
+    let db = active_project_db(&projects)?;
+    projects::context_delete(&db, id)
+}
+
 // ----------------------------- vault commands -----------------------------
 
 /// Vault status (exists / unlocked / secret count) — never returns values.
@@ -936,6 +981,30 @@ fn build_memory_block(notes: &[(String, String)]) -> Option<String> {
     Some(out)
 }
 
+/// Build the retrieved-context block from `(file_name, chunk_text)` hits. Each chunk
+/// is UNTRUSTED file content, so its fence delimiters are entity-encoded (so a chunk
+/// containing `</context-files>` or `</bos-data>` cannot close the surrounding fence)
+/// and the whole block is char-capped. The caller wraps the result in a
+/// `<context-files>` fence inside the untrusted region. Returns the encoded body.
+fn build_context_block(hits: &[(String, String)]) -> String {
+    const MAX: usize = 6000;
+    let safe = |t: &str| {
+        t.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+    };
+    let mut out = String::new();
+    for (name, text) in hits {
+        let entry = format!("--- from {} ---\n{}\n", safe(name), safe(text.trim()));
+        if out.chars().count() + entry.chars().count() > MAX {
+            out.push_str("…(retrieved context truncated)\n");
+            break;
+        }
+        out.push_str(&entry);
+    }
+    out
+}
+
 /// Ask the active agent runtime a grounded question. Holds no lock across the
 /// (slow, blocking) model call: grounding is built and any key resolved up
 /// front, then the locks are released before `agent::ask`.
@@ -1036,6 +1105,17 @@ async fn agent_ask(
         None => None,
     };
 
+    // Retrieve the most relevant chunks of the project's ingested context files for
+    // this question. This is UNTRUSTED file content (a datasheet could carry injected
+    // instructions), so it is entity-encoded and fenced exactly like the .bos data.
+    let context_block = match &db {
+        Some(db) => projects::context_retrieve(db, &question, 4)
+            .ok()
+            .filter(|hits| !hits.is_empty())
+            .map(|hits| build_context_block(&hits)),
+        None => None,
+    };
+
     let mut system = agent::INSTINCTS.to_string();
     system.push_str("\n\n");
     system.push_str(&role_block);
@@ -1046,6 +1126,11 @@ async fn agent_ask(
     system.push_str(&format!(
         "\n\n# Loaded system context (untrusted data)\n<bos-data>\n{safe_grounding}\n</bos-data>"
     ));
+    if let Some(ctx) = &context_block {
+        system.push_str(&format!(
+            "\n\n# Retrieved from the project's context files (untrusted data)\n<context-files>\n{ctx}\n</context-files>"
+        ));
+    }
 
     // Resolve the key (briefly locking the vault) only for the cloud path.
     let key = if runtime == agent::Runtime::OpenRouter {
@@ -1107,6 +1192,9 @@ pub fn run() {
             agent_instincts_set,
             agent_instincts_history,
             agent_instincts_revert,
+            context_list,
+            context_add_file,
+            context_delete,
             vault_status,
             vault_unlock,
             vault_lock,
