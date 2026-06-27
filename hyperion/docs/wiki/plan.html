@@ -85,7 +85,7 @@
     <div class="sub">Enterprise IoT workbench for ComfortClick bOS, operated by an AI agent. The full vision, phased — crossed off as it lands.</div>
     <div class="overall">
       <div class="bar"><i id="overallbar"></i></div>
-      <div class="pct" id="overallpct">58%</div>
+      <div class="pct" id="overallpct">64%</div>
     </div>
     <div class="legend">
       <span><i class="dot done"></i> Done</span>
@@ -185,7 +185,7 @@
         <li class="done">Per-project store (SQLite snapshots)</li>
         <li class="todo">Milesight gateway config → LoRa/IoT topology</li>
         <li class="done">Add PDF/Word/any file → indexed context</li>
-        <li class="todo">Proactively suggest missing context</li>
+        <li class="done">Proactively suggest missing context</li>
       </ul>
     </div>
 
@@ -220,7 +220,7 @@
         <li class="done">Per-feature wiki docs (built as we go)</li>
         <li class="done">Token-based theme (<code>:root</code>)</li>
         <li class="done">This live progress dashboard</li>
-        <li class="todo">Theme switcher + editable pages</li>
+        <li class="done">Theme switcher + editable pages</li>
         <li class="todo">Network address/login registry (vault-backed)</li>
         <li class="todo">10 HTML-effectiveness artifacts; static-site export</li>
       </ul>
@@ -264,7 +264,7 @@
       <h3>M8 — Version control (GitHub × ComfortClick) <span class="pill todo">To do</span></h3>
       <p class="desc">Semantic .bos diffs, human PRs with AI docs, timeline.</p>
       <ul class="checks">
-        <li class="todo">Snapshot semantic diff engine</li>
+        <li class="done">Snapshot semantic diff engine</li>
         <li class="todo">In-app PRs (human narrative + AI docs)</li>
         <li class="todo">Comment/argue threads + merge</li>
         <li class="todo">Project timeline</li>
@@ -351,7 +351,7 @@
 <script>
   // Animate the overall bar to its target on load (purely cosmetic).
   (function(){
-    var pct = 58;
+    var pct = 64;
     requestAnimationFrame(function(){
       var el = document.getElementById('overallbar');
       if (el) el.style.width = pct + '%';
