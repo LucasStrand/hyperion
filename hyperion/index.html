@@ -11,7 +11,11 @@
 :root{--bg:#ffffff;--ink:#1b1b1b;--mut:#6b7785;--line:#c9d2dc;--pan:#f3f5f8;
 --pan2:#e8edf3;--sel:#2f7bd6;--selbg:#cfe2fb;--acc:#1f6fc4;--kw:#1f6fc4;
 --set:#a8430f;--delay:#7a6a00;--run:#7a3aa8;--cmt:#2e7d32;--bool:#d24b3e;
---int:#1f6fc4;--str:#2e7d32;--gate:#c47a00;}
+--int:#1f6fc4;--str:#2e7d32;--gate:#c47a00;
+/* M9 DesignSync: shared radii / shadows / motion so new surfaces stay consistent */
+--radius:4px;--radius-lg:8px;--radius-pill:10px;
+--shadow-sm:0 1px 2px rgba(20,28,38,.06);--shadow-lg:0 8px 30px rgba(0,0,0,.18);
+--ring:0 0 0 2px rgba(47,123,214,.35);--t-fast:.12s ease;}
 *{box-sizing:border-box}
 body{margin:0;font:13px/1.45 "Segoe UI",system-ui,sans-serif;background:var(--bg);
 color:var(--ink);height:100vh;display:flex;flex-direction:column;overflow:hidden}
@@ -246,6 +250,16 @@ letter-spacing:.04em;user-select:none;display:flex;align-items:center;gap:7px}
 .actxadd{font:inherit;font-size:12px;padding:5px 14px;border:1px solid var(--acc);background:var(--acc);color:#fff;border-radius:6px;cursor:pointer}
 .actxadd:hover{background:#1a5da8}
 .actxadd:disabled{opacity:.5;cursor:default}
+/* ---- M9 DesignSync: bounded, additive polish (no layout changes) ---- */
+.appbtn,.asend,.actxadd,.amemadd #amemsave,#agentros #arossave,.arosghost,.wikied .wbtn,.amsg .pbload{
+  transition:background var(--t-fast),box-shadow var(--t-fast),filter var(--t-fast),opacity var(--t-fast)}
+.appbtn:active:not(:disabled){transform:translateY(.5px)}
+.asend:hover:not(:disabled){filter:brightness(1.06)}
+/* clearer keyboard focus across interactive controls (accessibility) */
+.appbtn:focus-visible,.asend:focus-visible,.actxadd:focus-visible,.arosghost:focus-visible,
+input:focus-visible,select:focus-visible,textarea:focus-visible,.amsg .pbload:focus-visible{
+  outline:none;box-shadow:var(--ring)}
+.tab,.subtab{transition:background var(--t-fast),color var(--t-fast)}
 </style>
 <script type="module" src="/src/main.ts"></script>
 </head>
@@ -356,6 +370,7 @@ letter-spacing:.04em;user-select:none;display:flex;align-items:center;gap:7px}
   <div class="ah">&#128172; bOS Co-pilot
     <span id="aruntime" class="abadge off">no runtime</span>
     <button type="button" class="x" onclick="closeAgent()" aria-label="Close agent">&#10005;</button></div>
+  <div id="atools" class="atools" style="display:none"></div>
   <div id="agentmem" class="amem">
     <div class="amemh" id="amemtoggle"><span class="amemchev">&#9656;</span> Project memory
       <span id="amemcount" class="amemcount"></span></div>

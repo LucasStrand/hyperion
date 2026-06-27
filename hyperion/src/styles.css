@@ -95,6 +95,55 @@
 [data-theme="dark"] .aroshrow { background: var(--pan2); }
 [data-theme="dark"] .amemh:hover { background: var(--pan2); }
 
+/* ---- Suggested-tools hint band (M9; theme-agnostic, new selectors only) ----
+ * A small advisory strip under the agent header listing context-recommended MCP
+ * servers + ECC skills (src-tauri/src/tooling.rs). Additive: it sits between the
+ * header and the existing panels and never alters their layout. */
+.atools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  background: var(--pan);
+  border-bottom: 1px solid var(--line);
+}
+.atools .atoolslbl {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--mut);
+  margin-right: 2px;
+}
+.atools .atoolchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #10243b;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill, 10px);
+  padding: 2px 8px 2px 5px;
+  cursor: default;
+  box-shadow: var(--shadow-sm, none);
+}
+.atools .atoolchip .atoolkind {
+  font-size: 8.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  padding: 1px 5px;
+  border-radius: 7px;
+  background: #eaf7f0;
+  color: #1a7f37;
+}
+.atools .atoolchip.mcp .atoolkind { background: #eef2fb; color: #1f6fc4; }
+[data-theme="dark"] .atools { background: var(--pan); }
+[data-theme="dark"] .atools .atoolchip { background: var(--pan2); color: var(--ink); }
+
 /* ---- Wiki editor component (theme-agnostic; new selectors only) ---- */
 .wikied { display: flex; flex-direction: column; gap: 10px; }
 .wikied .wrow { display: flex; gap: 8px; align-items: center; }

@@ -21,6 +21,7 @@ mod roster;
 mod security;
 mod standard;
 mod suggest;
+mod tooling;
 mod vault;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -868,6 +869,55 @@ fn timeline_add(
     Ok(json!({ "id": id }))
 }
 
+// ----------------------------- tool auto-select (M9) -----------------------------
+//
+// A deterministic recommender (tooling.rs) that maps the loaded context — whether a
+// `.bos` is open, the kinds of ingested context files, and the pending question — to
+// suggested MCP servers + ECC skills. Pure mapping; this command only gathers the
+// inputs from live state. Offline and read-only toward bOS; no project is required
+// (an open project just adds the context-file-kind signal).
+
+/// Recommend MCP servers + ECC skills for the current context. `query` is the
+/// operator's pending question (optional). Reads whether a `.bos` is loaded from the
+/// render store and the ingested file kinds from the active project (if any), then
+/// runs the pure `tooling::recommend`. Returns one flat JSON object per recommendation.
+#[tauri::command]
+fn recommend_tools(
+    query: Option<String>,
+    store: State<'_, Mutex<Store>>,
+    projects: State<'_, Mutex<Projects>>,
+) -> Result<Vec<Value>, String> {
+    let has_bos = !store
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .nodes
+        .is_empty();
+    // The file-kind signal comes from the active project's ingested context, if a
+    // project is open. No project simply means no file signal — the recommender still
+    // works on the `.bos` + question alone, so this never requires a project.
+    let context_file_kinds: Vec<String> = match active_project_db(&projects).ok() {
+        Some(db) => projects::context_list(&db)
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|f| {
+                f.get("kind")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
+            .collect(),
+        None => Vec::new(),
+    };
+    let input = tooling::ToolingInput {
+        has_bos,
+        context_file_kinds,
+        query: query.unwrap_or_default(),
+    };
+    tooling::recommend(&input)
+        .iter()
+        .map(|r| serde_json::to_value(r).map_err(|e| format!("serialize tool rec: {e}")))
+        .collect()
+}
+
 // ----------------------------- code standard (M3) -----------------------------
 //
 // The recommended project code standard (standard.rs) plus a deterministic audit
@@ -1686,6 +1736,7 @@ pub fn run() {
             pr_delete,
             timeline_list,
             timeline_add,
+            recommend_tools,
             code_standard,
             code_audit,
             security_scan,

@@ -42,6 +42,8 @@ const api = {
   // agent runtime adapter (src-tauri/src/agent.rs)
   agentStatus: () => invoke("agent_status"),
   agentAsk:    (question, focusPath, agentId) => invoke("agent_ask", { question, focusPath, agentId }),
+  // deterministic MCP/skill recommender (src-tauri/src/tooling.rs)
+  recommendTools: (query) => invoke("recommend_tools", { query }),
 
   agentRoster:           () => invoke("agent_roster"),
   agentInstinctsGet:     (agentId) => invoke("agent_instincts_get", { agentId }),
@@ -441,8 +443,24 @@ async function refreshAgentStatus(){
     else { b.textContent='no runtime'; b.classList.add('off'); }
   }catch(e){ b.textContent='status error'; b.classList.add('off'); }
 }
-function openAgent(){ $('#agent').classList.add('on'); refreshAgentStatus(); refreshRoster(); if(memOpen) refreshMemory(); if(ctxOpen) refreshContext(); $('#aq').focus(); }
+function openAgent(){ $('#agent').classList.add('on'); refreshAgentStatus(); refreshRoster(); refreshToolHints(); if(memOpen) refreshMemory(); if(ctxOpen) refreshContext(); $('#aq').focus(); }
 function closeAgent(){ $('#agent').classList.remove('on'); }
+// ---------- suggested tools hint (M9) ----------
+// A small, optional band of context-aware MCP/skill suggestions from the deterministic
+// recommender (src-tauri/src/tooling.rs). Driven by what's loaded — whether a .bos is
+// open and the kinds of ingested context files — plus the pending question. Each chip
+// carries the "why now" as a tooltip. Purely advisory: it never sends or runs anything.
+async function refreshToolHints(){
+  const el=$('#atools'); if(!el) return;
+  const q=($('#aq')&&$('#aq').value.trim())||null;
+  let recs=[];
+  try{ recs=await api.recommendTools(q); }catch(e){ recs=[]; }
+  if(!recs.length){ el.innerHTML=''; el.style.display='none'; return; }
+  el.style.display='';
+  el.innerHTML='<span class="atoolslbl">Suggested tools</span>'
+    + recs.map(r=>'<span class="atoolchip '+esc(r.kind)+'" title="'+esc(r.reason)+'">'
+        +'<span class="atoolkind">'+esc(r.kind)+'</span>'+esc(r.name)+'</span>').join('');
+}
 // Minimal renderer: escape everything, then turn ``` fenced blocks into <pre>.
 // A ```playbook fence is tagged and gets a "Load playbook" button that routes the
 // block into the guide engine (loadGuideFromObject) so it renders + auto-grades.
@@ -681,6 +699,8 @@ async function refreshContext(){
     if(!confirm('Remove this context file? The co-pilot will no longer retrieve from it.')) return;
     try{ await api.contextDelete(Number(b.dataset.id)); await refreshContext(); }
     catch(e){ alert('Delete failed: '+e); }});
+  // The recommender keys off the loaded file kinds — keep its chips in sync.
+  refreshToolHints();
 }
 function fmtBytes(n){ n=Number(n)||0; if(n<1024) return n+' B'; if(n<1048576) return (n/1024).toFixed(1)+' KB'; return (n/1048576).toFixed(1)+' MB'; }
 async function addContextFile(){
