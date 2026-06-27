@@ -296,13 +296,14 @@ pub fn instincts_active(
 }
 
 /// The instinct body actually used to prompt this agent: the active override if
-/// one exists, else the built-in baseline.
-pub fn instincts_resolved(db: &Path, agent: &Agent) -> String {
-    instincts_active(db, agent.id)
-        .ok()
-        .flatten()
-        .map(|(_, body, _)| body)
-        .unwrap_or_else(|| agent.instincts.to_string())
+/// one exists, else the built-in baseline. A DB read *error* is propagated (not
+/// swallowed) — silently falling back to the built-in persona would let a transient
+/// failure drop the operator's configured instincts from the prompt without notice.
+pub fn instincts_resolved(db: &Path, agent: &Agent) -> Result<String, String> {
+    Ok(match instincts_active(db, agent.id)? {
+        Some((_, body, _)) => body,
+        None => agent.instincts.to_string(),
+    })
 }
 
 /// Validate an instinct body for storage: trim, require non-empty within the cap,
@@ -421,9 +422,9 @@ pub fn instincts_revert(db: &Path, agent_id: &str, version: i64) -> Result<i64, 
 /// override the standing instincts. The resolved body is operator/built-in text in
 /// the trusted instructions region, so it is not fenced — but it is bounded so a
 /// pathological override cannot dominate the prompt (the cap is enforced on write).
-pub fn role_block(db: &Path, agent: &Agent) -> String {
-    let resolved = instincts_resolved(db, agent);
-    role_block_from(agent, &resolved)
+pub fn role_block(db: &Path, agent: &Agent) -> Result<String, String> {
+    let resolved = instincts_resolved(db, agent)?;
+    Ok(role_block_from(agent, &resolved))
 }
 
 /// Same as `role_block` but without a project DB (no overrides available): uses the
@@ -615,7 +616,7 @@ mod tests {
 
         // No override yet: resolved == built-in, active == None.
         let cfg = get("configurator").unwrap();
-        assert_eq!(instincts_resolved(&db, cfg), cfg.instincts);
+        assert_eq!(instincts_resolved(&db, cfg).unwrap(), cfg.instincts);
         assert!(instincts_active(&db, "configurator").unwrap().is_none());
 
         // First save -> version 1; second -> version 2; resolved tracks the latest.
@@ -624,7 +625,7 @@ mod tests {
         let v2 = instincts_set(&db, "configurator", "Prefer the smallest playbook.").unwrap();
         assert_eq!(v2, 2);
         assert_eq!(
-            instincts_resolved(&db, cfg),
+            instincts_resolved(&db, cfg).unwrap(),
             "Prefer the smallest playbook."
         );
         let (active_ver, _, _) = instincts_active(&db, "configurator").unwrap().unwrap();
@@ -640,7 +641,7 @@ mod tests {
         let v3 = instincts_revert(&db, "configurator", 1).unwrap();
         assert_eq!(v3, 3);
         assert_eq!(
-            instincts_resolved(&db, cfg),
+            instincts_resolved(&db, cfg).unwrap(),
             "Always start with the loaded tree."
         );
         assert_eq!(instincts_history(&db, "configurator").unwrap().len(), 3);
@@ -648,7 +649,7 @@ mod tests {
         // Revert to 0 restores the built-in baseline as a new version.
         let v4 = instincts_revert(&db, "configurator", 0).unwrap();
         assert_eq!(v4, 4);
-        assert_eq!(instincts_resolved(&db, cfg), cfg.instincts);
+        assert_eq!(instincts_resolved(&db, cfg).unwrap(), cfg.instincts);
 
         // Reverting to a non-existent version errors; a negative version is rejected.
         assert!(instincts_revert(&db, "configurator", 99).is_err());
@@ -691,14 +692,14 @@ mod tests {
         let cfg = get("configurator").unwrap();
 
         // Built-in path mentions the role and the standing-instincts guardrail.
-        let b = role_block(&db, cfg);
+        let b = role_block(&db, cfg).unwrap();
         assert!(b.contains("Configurator-Expert"));
         assert!(b.contains("never override"));
         assert!(b.contains(cfg.instincts));
 
         // After an override, the block carries the new body, not the built-in.
         instincts_set(&db, "configurator", "Custom: cite paths only.").unwrap();
-        let b2 = role_block(&db, cfg);
+        let b2 = role_block(&db, cfg).unwrap();
         assert!(b2.contains("Custom: cite paths only."));
         assert!(!b2.contains(cfg.instincts));
 

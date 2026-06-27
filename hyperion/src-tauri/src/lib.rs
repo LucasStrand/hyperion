@@ -1023,7 +1023,8 @@ async fn agent_ask(
     // else the built-in baseline. These are trusted operator/built-in instructions,
     // so they sit alongside INSTINCTS, ahead of the untrusted <bos-data> fence.
     let role_block = match &db {
-        Some(db) => roster::role_block(db, agent),
+        Some(db) => roster::role_block(db, agent)
+            .map_err(|e| format!("could not load this agent's instincts: {e}"))?,
         None => roster::role_block_builtin(agent),
     };
 

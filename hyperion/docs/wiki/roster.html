@@ -45,8 +45,9 @@
   <div class="kicker">Phase 2 · milestone M5 · many experts, one co-pilot</div>
   <h1>Agent Roster <span class="pill done">Built</span></h1>
   <p class="lede">The co-pilot isn't one monolith &mdash; it's a roster of role-specialized agents.
-    A Coordinator routes each question to the right expert; every expert carries its own standing
-    instincts, and an explicit <em>share protocol</em> says when to hand work to a colleague.</p>
+    A built-in router sends each question to the right expert (a Coordinator steps in for general or
+    unmatched questions); every expert carries its own standing instincts, and an explicit
+    <em>share protocol</em> says when to hand work to a colleague.</p>
 
   <h2>Why a roster</h2>
   <p>Building a bOS system spans very different skills: wiring Modbus/KNX objects in the
@@ -65,13 +66,14 @@
     <tr><td><b>Client/Design-Expert</b></td><td>The bOS Client: visualization, theming, layout, design taste.</td><td>Configurator · Doc-Writer</td></tr>
     <tr><td><b>Crawler</b> <span class="pill soon">grows in M7</span></td><td>Official docs/knowledgebase + forum knowledge, with provenance.</td><td>Doc-Writer · Configurator</td></tr>
     <tr><td><b>Standards/Reviewer</b></td><td>Reviews configs/code against the project's standards.</td><td>Security · Configurator</td></tr>
-    <tr><td><b>Doc-Writer</b></td><td>Wiki artifacts &amp; documentation, in the right shape for the information.</td><td>Client/Design · Standards</td></tr>
+    <tr><td><b>Doc-Writer</b></td><td>Wiki artifacts &amp; documentation, in the right shape for the information.</td><td>Client/Design · Standards/Reviewer</td></tr>
     <tr><td><b>Security</b></td><td>Secrets hygiene, the vault, plaintext-password detection, the pre-PR gate.</td><td>Standards</td></tr>
   </table>
 
   <h2>How routing works</h2>
   <p>Pick an agent from the <em>who answers</em> dropdown in the chat dock, or leave it on
-    <code>Auto</code> and the Coordinator routes for you. Routing is <b>deterministic and offline</b> &mdash;
+    <code>Auto</code> and the router picks the specialist for you (the Coordinator handles anything
+    unmatched). Routing is <b>deterministic and offline</b> &mdash;
     no model call, so it's instant, free, and unit-tested. Each specialist is scored by whole-word
     keyword hits in your question (a focused node's <em>type</em> adds a nudge by substring, so selecting
     a <code>ModbusRegister</code> tips an ambiguous question toward the Configurator-Expert). The

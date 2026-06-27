@@ -319,10 +319,30 @@ pub const HIGH_CONFIDENCE_SECRET_KINDS: [&str; 3] =
 /// log output) would reject UUIDs and long device IDs an integrator legitimately
 /// records, so it is *not* used as a write-rejection rule.
 pub fn token_looks_like_secret(token: &str) -> bool {
+    // Strip surrounding quotes, brackets, and Markdown emphasis/code punctuation so a
+    // key pasted as `sk-or-…`, **sk-…**, or "sk-…", is still unwrapped and matched.
     let t = token.trim_matches(|c: char| {
         matches!(
             c,
-            '"' | '\'' | ',' | ';' | ':' | '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>'
+            '"' | '\''
+                | ','
+                | ';'
+                | ':'
+                | '('
+                | ')'
+                | '['
+                | ']'
+                | '{'
+                | '}'
+                | '<'
+                | '>'
+                | '`'
+                | '*'
+                | '_'
+                | '~'
+                | '|'
+                | '!'
+                | '#'
         )
     });
     if t.len() < 12 {
@@ -359,6 +379,13 @@ mod tests {
         ));
         assert!(body_has_plaintext_secret(
             "token ghp_ABCDEFghijkl0123456789MNOPqrstuvWX"
+        ));
+        // A key wrapped in Markdown backticks/bold is still unwrapped and caught.
+        assert!(body_has_plaintext_secret(
+            "the key is `sk-or-v1-abc123def456ghi789jkl012`"
+        ));
+        assert!(body_has_plaintext_secret(
+            "**sk-ant-api03-abc123def456ghi789jkl012mno**"
         ));
         // A PEM block is still caught structurally.
         assert!(body_has_plaintext_secret(
