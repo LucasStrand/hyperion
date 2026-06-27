@@ -129,6 +129,7 @@ fn field_changes(path: &str, before: &Value, after: &Value, out: &mut Vec<FieldC
 /// `to` the newer; both are the parsed `map_json` (a JSON array of node objects).
 /// Returns the added (in `to` only), removed (in `from` only), and field-level
 /// changed (in both, differing) nodes. Pure: no DB, file, or network.
+#[must_use]
 pub fn diff_nodes(from: &Value, to: &Value) -> DiffResult {
     let from_idx = index(from);
     let to_idx = index(to);

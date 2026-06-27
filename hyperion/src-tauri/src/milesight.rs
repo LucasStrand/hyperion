@@ -208,6 +208,7 @@ fn parse_device(v: &Value) -> DeviceNode {
 /// Parse a Milesight gateway configuration `Value` into a normalized [`Topology`].
 /// Pure and total: any JSON (object, array, scalar, null) is accepted and never
 /// panics; unknown shapes degrade to an empty/partial topology.
+#[must_use]
 pub fn parse_gateway(json: &Value) -> Topology {
     let gw_sections = &[
         "gateway", "gw", "general", "system", "device", "basic", "info",
