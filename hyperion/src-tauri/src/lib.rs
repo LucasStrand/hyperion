@@ -14,6 +14,7 @@ mod entra;
 mod ingest;
 mod projects;
 mod roster;
+mod suggest;
 mod vault;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -651,6 +652,22 @@ fn context_delete(id: i64, projects: State<'_, Mutex<Projects>>) -> Result<bool,
     projects::context_delete(&db, id)
 }
 
+/// Proactively suggest what context the active project is missing (no `.bos`
+/// snapshot, no/few context files, or query terms documented nowhere). Read-only
+/// and deterministic; returns one flat JSON object per suggestion. `query` is the
+/// operator's pending question, used to flag undocumented salient terms.
+#[tauri::command]
+fn context_suggest(
+    query: Option<String>,
+    projects: State<'_, Mutex<Projects>>,
+) -> Result<Vec<Value>, String> {
+    let db = active_project_db(&projects)?;
+    suggest::suggest(&db, query.as_deref())?
+        .iter()
+        .map(|s| serde_json::to_value(s).map_err(|e| format!("serialize suggestion: {e}")))
+        .collect()
+}
+
 // ----------------------------- vault commands -----------------------------
 
 /// Vault status (exists / unlocked / secret count) — never returns values.
@@ -1224,6 +1241,7 @@ pub fn run() {
             context_list,
             context_add_file,
             context_delete,
+            context_suggest,
             vault_status,
             vault_unlock,
             vault_lock,
