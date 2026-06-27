@@ -9,6 +9,7 @@
 // Strictly read-only with respect to the bOS system — never writes to it.
 
 mod agent;
+mod diff;
 mod embed;
 mod entra;
 mod ingest;
@@ -490,6 +491,42 @@ fn import_bos(
         build_store_from_nodes(workspace, fname, nodes);
     let p = projects.lock().unwrap_or_else(|e| e.into_inner());
     Ok(json!({ "snapshot_id": id, "view": project_view(&p) }))
+}
+
+/// Load a snapshot's parsed node tree (`map_json`) by id from a project db. The
+/// snapshot rows are written by `projects::add_snapshot`; this is the read-by-id
+/// counterpart the diff needs (the public `active_snapshot` only loads the active
+/// pointer). Read-only — opens the db, reads one row, parses the stored JSON.
+fn load_snapshot_nodes(db: &Path, id: i64) -> Result<Value, String> {
+    let conn = rusqlite::Connection::open(db).map_err(|e| format!("open db: {e}"))?;
+    let map_json: String = conn
+        .query_row(
+            "SELECT map_json FROM snapshot WHERE id = ?1",
+            rusqlite::params![id],
+            |r| r.get(0),
+        )
+        .map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => format!("no such snapshot: {id}"),
+            other => format!("read snapshot {id}: {other}"),
+        })?;
+    serde_json::from_str(&map_json).map_err(|e| format!("parse snapshot {id}: {e}"))
+}
+
+/// Semantic diff between two of the active project's snapshots: which nodes were
+/// added, removed, or had individual fields changed between `from_id` (older) and
+/// `to_id` (newer). Loads each snapshot's parsed node tree by id and runs the pure
+/// `diff::diff_nodes`. Returns `{ added, removed, changed }` JSON. Read-only.
+#[tauri::command]
+fn snapshot_diff(
+    from_id: i64,
+    to_id: i64,
+    projects: State<'_, Mutex<Projects>>,
+) -> Result<Value, String> {
+    let db = active_project_db(&projects)?;
+    let from = load_snapshot_nodes(&db, from_id)?;
+    let to = load_snapshot_nodes(&db, to_id)?;
+    let result = diff::diff_nodes(&from, &to);
+    serde_json::to_value(result).map_err(|e| format!("serialize diff: {e}"))
 }
 
 // ----------------------------- memory commands -----------------------------
@@ -1203,6 +1240,7 @@ pub fn run() {
             current_project,
             open_project,
             import_bos,
+            snapshot_diff,
             memory_list,
             memory_set,
             memory_delete,
