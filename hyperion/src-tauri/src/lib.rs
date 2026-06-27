@@ -15,6 +15,7 @@ mod embed;
 mod entra;
 mod export;
 mod ingest;
+mod milesight;
 mod netreg;
 mod projects;
 mod roster;
@@ -404,6 +405,35 @@ fn parse_bos(path: String, state: State<'_, Mutex<Store>>) -> Result<Value, Stri
     let mut s = state.lock().unwrap_or_else(|e| e.into_inner());
     *s = build_store_from_nodes(workspace, config_name, nodes);
     Ok(json!({ "config": s.config_name, "count": s.nodes.len() }))
+}
+
+// ----------------------------- milesight import (M1) -----------------------------
+//
+// Parse an uploaded Milesight LoRaWAN gateway configuration export into a
+// normalized IoT topology (gateway + LoRa settings + attached devices). The
+// webview passes an absolute path picked via the OS dialog; this command reads
+// the file off disk (size-capped like `context_add_file`), parses it as JSON, and
+// runs the pure `milesight::parse_gateway`. No project is required and nothing is
+// written — strictly local and read-only toward bOS.
+//
+// NOTE: the parser assumes the common Milesight UG-series JSON export shape (see
+// `milesight.rs`); validate against a real export before relying on the mapping.
+#[tauri::command]
+fn milesight_import(path: String) -> Result<Value, String> {
+    let p = Path::new(&path);
+    // Bound the read so a huge/binary file can't be slurped before validation
+    // (mirrors `context_add_file`). Compare in u64 — `len()` is u64.
+    let meta = std::fs::metadata(p).map_err(|e| format!("read file: {e}"))?;
+    if meta.len() > ingest::MAX_FILE_BYTES as u64 {
+        return Err(format!(
+            "file is too large (max {} MB)",
+            ingest::MAX_FILE_BYTES / (1024 * 1024)
+        ));
+    }
+    let text = std::fs::read_to_string(p).map_err(|e| format!("read file: {e}"))?;
+    let json: Value = serde_json::from_str(&text).map_err(|e| format!("parse JSON: {e}"))?;
+    let topology = milesight::parse_gateway(&json);
+    serde_json::to_value(&topology).map_err(|e| format!("serialize topology: {e}"))
 }
 
 // ----------------------------- project commands -----------------------------
@@ -1706,6 +1736,7 @@ pub fn run() {
             list_playbooks,
             get_playbook,
             parse_bos,
+            milesight_import,
             list_projects,
             create_project,
             current_project,
