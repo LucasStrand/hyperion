@@ -17,6 +17,7 @@ mod ingest;
 mod netreg;
 mod projects;
 mod roster;
+mod security;
 mod standard;
 mod suggest;
 mod vault;
@@ -801,6 +802,66 @@ fn code_audit() -> Result<Vec<Value>, String> {
         .collect()
 }
 
+// ----------------------------- security commands (M6) -----------------------------
+
+/// Scan Hyperion's own sources for security risks (hardcoded secrets, `unsafe`
+/// blocks, risky web APIs, unresolved risk markers). Reads every
+/// `src-tauri/src/*.rs` and `src/*.ts` off disk (relative to the crate root,
+/// reusing the standard-audit collector) and runs the pure `security::scan_source`,
+/// returning one flat JSON object per finding. Read-only with respect to bOS.
+#[tauri::command]
+fn security_scan() -> Result<Vec<Value>, String> {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let files = standard::collect_project_sources(&manifest_dir)?;
+    security::scan_source(&files)
+        .iter()
+        .map(|f| serde_json::to_value(f).map_err(|e| format!("serialize finding: {e}")))
+        .collect()
+}
+
+/// True if a CI workflow is present in the repo: any file under
+/// `<workspace>/.github/workflows`. Deterministic disk check, no network.
+fn ci_workflow_present(workspace: &Path) -> bool {
+    let dir = workspace.join(".github").join("workflows");
+    std::fs::read_dir(&dir)
+        .map(|mut entries| entries.any(|e| e.is_ok()))
+        .unwrap_or(false)
+}
+
+/// Evaluate the enterprise-readiness gate from the running app's known state:
+/// the encrypted vault exists, access is Entra-gated (currently signed in), a CI
+/// workflow is present, the crate ships tests, and the source scan finds no
+/// plaintext secrets. Returns the pass/fail `GateResult` with per-item detail.
+#[tauri::command]
+fn enterprise_gate_check(
+    auth: State<'_, Mutex<Auth>>,
+    vault: State<'_, Mutex<Vault>>,
+) -> Result<Value, String> {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace = default_workspace();
+
+    let files = standard::collect_project_sources(&manifest_dir)?;
+    let plaintext_secret_findings =
+        security::plaintext_secret_count(&security::scan_source(&files));
+    let tests_present = files.iter().any(|(_, c)| c.contains("#[cfg(test)]"));
+
+    // Lock order matches the rest of the app: auth before vault.
+    let sso_enabled = auth
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .is_authenticated();
+    let vault_encrypted = vault.lock().unwrap_or_else(|e| e.into_inner()).exists();
+
+    let result = security::enterprise_gate(&security::EnterpriseInputs {
+        vault_encrypted,
+        sso_enabled,
+        ci_present: ci_workflow_present(&workspace),
+        tests_present,
+        plaintext_secret_findings,
+    });
+    serde_json::to_value(result).map_err(|e| format!("serialize gate result: {e}"))
+}
+
 // ----------------------------- vault commands -----------------------------
 
 /// Vault status (exists / unlocked / secret count) — never returns values.
@@ -1525,6 +1586,8 @@ pub fn run() {
             context_suggest,
             code_standard,
             code_audit,
+            security_scan,
+            enterprise_gate_check,
             vault_status,
             vault_unlock,
             vault_lock,
