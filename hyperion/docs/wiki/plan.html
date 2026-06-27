@@ -85,7 +85,7 @@
     <div class="sub">Enterprise IoT workbench for ComfortClick bOS, operated by an AI agent. The full vision, phased — crossed off as it lands.</div>
     <div class="overall">
       <div class="bar"><i id="overallbar"></i></div>
-      <div class="pct" id="overallpct">42%</div>
+      <div class="pct" id="overallpct">52%</div>
     </div>
     <div class="legend">
       <span><i class="dot done"></i> Done</span>
@@ -115,9 +115,9 @@
     </div>
     <div class="phase review">
       <div class="pid">PHASE 2</div><div class="pname">The agent</div>
-      <div class="pbar"><i style="width:55%"></i></div>
+      <div class="pbar"><i style="width:75%"></i></div>
       <span class="pill review">In progress</span>
-      <div class="desc" style="font-size:11.5px;margin-top:6px">Runtime adapter ✓ · memory &amp; playbook in review · roster to&nbsp;do</div>
+      <div class="desc" style="font-size:11.5px;margin-top:6px">Runtime adapter ✓ · memory ✓ · playbook ✓ · roster to&nbsp;do</div>
     </div>
     <div class="phase todo">
       <div class="pid">PHASE 3</div><div class="pname">Context &amp; knowledge</div>
@@ -139,7 +139,7 @@
     </div>
   </div>
 
-  <h2>In flight right now</h2>
+  <h2>Shipped this session · 2026-06-27</h2>
   <div class="flight">
     <div class="pr">
       <div class="h"><span class="num">PR #1</span><span class="pill done">Merged</span></div>
@@ -147,24 +147,29 @@
       <div class="meta">M2/M9 · Claude Code → Codex → OpenRouter, instincts, grounded answers</div>
     </div>
     <div class="pr">
-      <div class="h"><span class="num">PR #2</span><span class="pill review">CI running</span></div>
+      <div class="h"><span class="num">PR #2</span><span class="pill done">Merged</span></div>
       <div class="t">GitHub Actions CI gate</div>
-      <div class="meta">ubuntu + windows · windows &amp; frontend green, linux compiling</div>
+      <div class="meta">ubuntu + windows · fmt/clippy/test + frontend build · SHA-pinned actions</div>
     </div>
     <div class="pr">
-      <div class="h"><span class="num">PR #4</span><span class="pill review">Fixing</span></div>
+      <div class="h"><span class="num">PR #4</span><span class="pill done">Merged</span></div>
       <div class="t">Per-project agent memory</div>
-      <div class="meta">M5 · adversarial review BLOCK → 4 fixes being applied</div>
+      <div class="meta">M5 · escaped into prompt, atomic upsert, 8KB cap, secret-scan on write</div>
     </div>
     <div class="pr">
-      <div class="h"><span class="num">PR #3</span><span class="pill review">Fixed</span></div>
+      <div class="h"><span class="num">PR #3</span><span class="pill done">Merged</span></div>
       <div class="t">Playbook routing → auto-grader</div>
-      <div class="meta">M2 · 6 blockers fixed (XSS, false-green); CSP runtime-check pending</div>
+      <div class="meta">M2 · XSS-hardened, false-green grader fixed, CSP set</div>
     </div>
     <div class="pr">
-      <div class="h"><span class="num">PR #5</span><span class="pill review">Open</span></div>
-      <div class="t">Community-health files</div>
-      <div class="meta">SECURITY · CONTRIBUTING · PR template · .gitattributes</div>
+      <div class="h"><span class="num">PR #5/#6</span><span class="pill done">Merged</span></div>
+      <div class="t">Community-health + this dashboard</div>
+      <div class="meta">SECURITY · CONTRIBUTING · PR template · .gitattributes · plan.html</div>
+    </div>
+    <div class="pr">
+      <div class="h"><span class="num">next</span><span class="pill todo">To do</span></div>
+      <div class="t">Multi-agent roster (M5)</div>
+      <div class="meta">Closes Phase 2 — roster + instincts versioning + share protocol</div>
     </div>
   </div>
 
@@ -185,14 +190,14 @@
     </div>
 
     <div class="mod">
-      <h3>M2 — Agent: "how do I implement X" <span class="pill review">In review</span></h3>
+      <h3>M2 — Agent: "how do I implement X" <span class="pill partial">Partial</span></h3>
       <p class="desc">A teacher, not just a doer — grounded in the loaded system.</p>
       <ul class="checks">
         <li class="done">Agent chat dock</li>
         <li class="done">Pluggable runtime (Claude Code → Codex → OpenRouter)</li>
         <li class="done">State what + pedagogical steps + finished code</li>
         <li class="done">Emit runnable playbook JSON</li>
-        <li class="review">Route emitted playbook into the auto-grader</li>
+        <li class="done">Route emitted playbook into the auto-grader</li>
         <li class="partial">RAG over context (grounds on .bos; embeddings to come)</li>
         <li class="todo">Auto-select MCP/skills by context</li>
       </ul>
@@ -222,11 +227,11 @@
     </div>
 
     <div class="mod">
-      <h3>M5 — Memory + instincts + roster <span class="pill review">In review</span></h3>
+      <h3>M5 — Memory + instincts + roster <span class="pill partial">Partial</span></h3>
       <p class="desc">Persistent per-project memory; standing instincts; an agent roster.</p>
       <ul class="checks">
         <li class="done">Agent instincts (system prompt)</li>
-        <li class="review">Per-project persistent memory</li>
+        <li class="done">Per-project persistent memory</li>
         <li class="todo">Multi-agent roster + share protocol</li>
         <li class="todo">Instincts persistence + versioning</li>
       </ul>
@@ -273,6 +278,7 @@
         <li class="done">Detect Claude Code → Codex → OpenRouter</li>
         <li class="done">Prefer local runtimes</li>
         <li class="done">ECC agents drive the dev flow (reviewers, fixers, workflows)</li>
+        <li class="done">CI gate + community health (public repo)</li>
         <li class="todo">Auto-select MCP/skills per file type</li>
         <li class="todo">DesignSync for professional client UI</li>
       </ul>
@@ -303,7 +309,7 @@
       <tr><td class="s">16</td><td>Firecrawl HTML-effectiveness examples</td><td class="s"><span class="pill todo">To do</span></td><td>M4</td></tr>
       <tr><td class="s">17</td><td>Wiki template editable + re-themeable</td><td class="s"><span class="pill partial">Partial</span></td><td>M4 (tokens ✓)</td></tr>
       <tr><td class="s">18</td><td>Artifacts &amp; use cases always considered</td><td class="s"><span class="pill partial">Partial</span></td><td>M4 / M2</td></tr>
-      <tr><td class="s">19</td><td>Persistent project memory at all times</td><td class="s"><span class="pill review">In review</span></td><td>M5</td></tr>
+      <tr class="done"><td class="s">19</td><td>Persistent project memory at all times</td><td class="s"><span class="pill done">Done</span></td><td>M5</td></tr>
       <tr class="done"><td class="s">20</td><td>Agent has instincts</td><td class="s"><span class="pill done">Done</span></td><td>M5</td></tr>
       <tr><td class="s">21</td><td>Shamelessly use ECC skills for IoT/custom code</td><td class="s"><span class="pill partial">Partial</span></td><td>M9</td></tr>
       <tr><td class="s">22</td><td>Prioritise bOS config/service/client knowledge</td><td class="s"><span class="pill todo">To do</span></td><td>M7</td></tr>
@@ -322,7 +328,7 @@
       <tr class="done"><td class="s">35</td><td>Microsoft login decrypts sensitive data</td><td class="s"><span class="pill done">Done</span></td><td>M6 (Entra)</td></tr>
       <tr><td class="s">36</td><td>Anything making it an enterprise IoT tool</td><td class="s"><span class="pill partial">Partial</span></td><td>M6/M9</td></tr>
       <tr><td class="s">37</td><td>Custom software meets enterprise criteria</td><td class="s"><span class="pill todo">To do</span></td><td>M6 gate</td></tr>
-      <tr><td class="s">38</td><td>Project knowledge on open; per-agent memory + sharing</td><td class="s"><span class="pill review">In review</span></td><td>M5</td></tr>
+      <tr><td class="s">38</td><td>Project knowledge on open; per-agent memory + sharing</td><td class="s"><span class="pill partial">Partial</span></td><td>M5 (memory ✓; sharing to do)</td></tr>
       <tr class="done"><td class="s">39</td><td>Codex/Claude Code/OpenRouter selectable</td><td class="s"><span class="pill done">Done</span></td><td>M9</td></tr>
       <tr class="done"><td class="s">40</td><td>Prefer local agents</td><td class="s"><span class="pill done">Done</span></td><td>M9</td></tr>
       <tr><td class="s">41</td><td>"Claude design" for a professional app</td><td class="s"><span class="pill partial">Partial</span></td><td>M9 DesignSync</td></tr>
@@ -335,15 +341,16 @@
 
   <div class="foot">
     This dashboard is regenerated as each unit lands — a green strike-through means shipped and verified.
-    Source of truth: the plan in <code>jolly-humming-toucan.md</code> and the live repo. Last updated <strong>2026-06-27</strong>.
-    Hyperion stays strictly read-only toward bOS.
+    <strong>2026-06-27:</strong> Phase 2 #1–#3 (runtime adapter, agent memory, playbook routing) shipped, plus the
+    CI gate and community-health files; next is the multi-agent roster to close Phase 2.
+    Source of truth: the plan in <code>jolly-humming-toucan.md</code> and the live repo. Hyperion stays strictly read-only toward bOS.
   </div>
 </div>
 
 <script>
   // Animate the overall bar to its target on load (purely cosmetic).
   (function(){
-    var pct = 42;
+    var pct = 52;
     requestAnimationFrame(function(){
       var el = document.getElementById('overallbar');
       if (el) el.style.width = pct + '%';
