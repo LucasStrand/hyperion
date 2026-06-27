@@ -150,6 +150,24 @@ fn init_db(conn: &Connection, name: &str) -> rusqlite::Result<()> {
          CREATE TABLE IF NOT EXISTS timeline (
              id INTEGER PRIMARY KEY AUTOINCREMENT,
              kind TEXT NOT NULL, summary TEXT NOT NULL, detail TEXT, created_at TEXT NOT NULL
+         );
+         -- Vault-backed network address + login registry (M6, Requirement #14).
+         -- One row per network device/login for the building network: a label and
+         -- address, optional username/notes, and an OPAQUE `secret_cipher` BLOB — the
+         -- per-entry secret is sealed by the encrypted vault (netreg never sees the
+         -- plaintext, and the clear columns are secret-scanned on write so a password
+         -- can't be pasted into `label`/`address`/`username`/`notes`). Additive +
+         -- IF NOT EXISTS, so older project DBs self-heal on open() with no data loss;
+         -- an empty table simply means no logins have been recorded yet. Managed by
+         -- the `netreg` module (CRUD) + the `net_*` commands (vault seal/unseal).
+         CREATE TABLE IF NOT EXISTS net_entry (
+             id INTEGER PRIMARY KEY AUTOINCREMENT,
+             label TEXT NOT NULL,
+             address TEXT NOT NULL,
+             username TEXT,
+             secret_cipher BLOB,
+             notes TEXT,
+             updated_at TEXT NOT NULL
          );",
     )?;
     // Stamp the version only on a fresh DB — never downgrade a future schema

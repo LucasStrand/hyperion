@@ -13,6 +13,7 @@ mod diff;
 mod embed;
 mod entra;
 mod ingest;
+mod netreg;
 mod projects;
 mod roster;
 mod suggest;
@@ -819,6 +820,149 @@ fn scan_secret(text: String) -> Vec<Value> {
     vault::scan_for_secrets(&text)
 }
 
+// ----------------------------- network registry commands (M6) -----------------------------
+//
+// A vault-backed registry of the building network's addresses + logins (netreg.rs +
+// the `net_entry` table). Per-project, so every command requires an open project (same
+// "open a project first" contract as memory/wiki/context). The per-entry secret is
+// *sealed by the vault*: `net_add` stores the plaintext secret in the encrypted vault
+// under a fresh per-entry key and persists only that key in the row's opaque
+// `secret_cipher` blob; `net_get` reveals it back. The clear fields are secret-scanned
+// in `netreg::add`. A locked vault yields a clear error rather than storing plaintext.
+
+/// A fresh, collision-resistant vault key under which one network entry's secret is
+/// sealed. Only this *key* (not the secret) lands in `net_entry.secret_cipher`; the
+/// secret itself is encrypted at rest by the vault under this name. Minted randomly so
+/// it can be created *before* the row is inserted, avoiding a second write to set it.
+fn fresh_net_secret_key() -> String {
+    use rand::RngCore;
+    let mut b = [0u8; 16];
+    rand::rngs::OsRng.fill_bytes(&mut b);
+    let hex: String = b.iter().map(|x| format!("{x:02x}")).collect();
+    format!("netreg/{hex}")
+}
+
+/// List the active project's network entries (id, label, address, username, notes,
+/// updated_at, has_secret — never the sealed secret blob or its plaintext).
+#[tauri::command]
+fn net_list(projects: State<'_, Mutex<Projects>>) -> Result<Vec<Value>, String> {
+    let db = active_project_db(&projects)?;
+    netreg::list(&db)
+}
+
+/// Add a network entry to the active project. When `secret` is non-empty the vault must
+/// be unlocked: the secret is sealed into the vault under a fresh key and only that key
+/// is stored in the row. Clear fields are validated + secret-scanned in `netreg::add`.
+#[tauri::command]
+fn net_add(
+    label: String,
+    address: String,
+    username: Option<String>,
+    secret: Option<String>,
+    notes: Option<String>,
+    projects: State<'_, Mutex<Projects>>,
+    vault: State<'_, Mutex<Vault>>,
+) -> Result<Value, String> {
+    let db = active_project_db(&projects)?;
+    // Seal the secret (if any) into the vault FIRST, under a fresh key, so only the key
+    // — never the plaintext — is handed to netreg. Gated on an unlocked vault so a
+    // locked vault returns a clear error instead of silently dropping the secret.
+    let sealed_key: Option<String> =
+        match secret.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            Some(sec) => {
+                let v = vault.lock().unwrap_or_else(|e| e.into_inner());
+                if !v.is_unlocked() {
+                    return Err(
+                        "vault is locked — unlock it before storing a network login secret".into(),
+                    );
+                }
+                let key = fresh_net_secret_key();
+                v.set(&key, sec)?;
+                Some(key)
+            }
+            None => None,
+        };
+    let cipher = sealed_key.as_ref().map(|k| k.as_bytes());
+    match netreg::add(
+        &db,
+        &label,
+        &address,
+        username.as_deref(),
+        cipher,
+        notes.as_deref(),
+    ) {
+        Ok(id) => Ok(json!({ "id": id })),
+        Err(e) => {
+            // The row was rejected (e.g. empty label, or a secret-shaped clear field).
+            // Roll back the just-sealed secret so the vault keeps no orphan entry.
+            if let Some(key) = &sealed_key {
+                let v = vault.lock().unwrap_or_else(|e| e.into_inner());
+                let _ = v.delete(key);
+            }
+            Err(e)
+        }
+    }
+}
+
+/// Reveal one network entry by id, unsealing its secret from the vault. Requires the
+/// vault to be unlocked when the entry has a stored secret. Returns the entry metadata
+/// plus the plaintext `secret` (or null when none is stored).
+#[tauri::command]
+fn net_get(
+    id: i64,
+    projects: State<'_, Mutex<Projects>>,
+    vault: State<'_, Mutex<Vault>>,
+) -> Result<Value, String> {
+    let db = active_project_db(&projects)?;
+    let entry = netreg::get(&db, id)?.ok_or_else(|| format!("no such network entry: {id}"))?;
+    // Unseal the secret from the vault (requires unlocked) when one is stored.
+    let secret = match &entry.secret_cipher {
+        Some(blob) => {
+            let key = std::str::from_utf8(blob)
+                .map_err(|_| "stored secret reference is corrupt".to_string())?;
+            let v = vault.lock().unwrap_or_else(|e| e.into_inner());
+            if !v.is_unlocked() {
+                return Err("vault is locked — unlock it to reveal this login's secret".into());
+            }
+            Some(v.reveal(key)?)
+        }
+        None => None,
+    };
+    Ok(json!({
+        "id": entry.id,
+        "label": entry.label,
+        "address": entry.address,
+        "username": entry.username,
+        "notes": entry.notes,
+        "updated_at": entry.updated_at,
+        "secret": secret,
+    }))
+}
+
+/// Delete a network entry by id from the active project. Returns whether it existed.
+/// Best-effort drops the entry's sealed secret from the vault first (when one exists
+/// and the vault is unlocked); the row is removed regardless, so a locked vault never
+/// blocks deleting an entry.
+#[tauri::command]
+fn net_delete(
+    id: i64,
+    projects: State<'_, Mutex<Projects>>,
+    vault: State<'_, Mutex<Vault>>,
+) -> Result<bool, String> {
+    let db = active_project_db(&projects)?;
+    if let Ok(Some(entry)) = netreg::get(&db, id) {
+        if let Some(blob) = &entry.secret_cipher {
+            if let Ok(key) = std::str::from_utf8(blob) {
+                let v = vault.lock().unwrap_or_else(|e| e.into_inner());
+                if v.is_unlocked() {
+                    let _ = v.delete(key);
+                }
+            }
+        }
+    }
+    netreg::delete(&db, id)
+}
+
 // ----------------------------- Entra SSO commands -----------------------------
 
 /// Auth status: `{ authenticated, identity }`.
@@ -1325,6 +1469,10 @@ pub fn run() {
             vault_delete_secret,
             vault_reveal_secret,
             scan_secret,
+            net_list,
+            net_add,
+            net_get,
+            net_delete,
             entra_status,
             entra_sign_in,
             entra_sign_out,
