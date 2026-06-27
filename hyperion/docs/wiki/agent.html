@@ -87,7 +87,7 @@
                      └ or OpenRouter      (Bearer key, never logged)
       │
       ▼
-  text answer  →  chat dock   (fenced ```playbook blocks highlighted)</div>
+  text answer  →  chat dock   (```playbook fence → "Load playbook" → guide engine)</div>
   <p>The grounding is <strong>token-bounded</strong> and built fresh from the in-memory render store on every
     ask. It is the bridge that makes the loaded <code>.bos</code> the agent's source of truth &mdash; the same
     principle the Configurator already lives by. Phase&nbsp;3's retrieval (embedded context files) will be
@@ -147,12 +147,27 @@
       <span style="white-space:nowrap">💬 Agent</span> chat dock: runtime badge, messages, playbook-aware rendering.</td></tr>
   </table>
 
+  <h2>Playbook hand-off <span class="pill done">Built</span></h2>
+  <p>When the agent emits a runnable <code>```playbook</code> block, the chat dock now does more than tag it.
+    Beside the <strong>&#9654; Playbook</strong> label sits a <strong>&#9654; Load playbook</strong> button.
+    Clicking it parses the block, validates it (a <code>feature</code> name and a non-empty <code>steps</code>
+    array), and routes the parsed object straight into the same Configurator guide engine the bundled
+    <code>playbooks/*.json</code> files use &mdash; through <code>loadGuideFromObject()</code> instead of
+    fetching a file by name.</p>
+  <p>From there it is indistinguishable from a shipped playbook: the steps render in the guide panel, each
+    step's <code>check</code> is <strong>auto-graded against the loaded <code>.bos</code></strong>
+    (&#10003;&nbsp;Implemented / &#9680;&nbsp;Partial / &#9675;&nbsp;To-do), targets highlight in the tree,
+    and Before/After diffs preview inline &mdash; all still strictly read-only toward bOS. Malformed JSON or a
+    missing <code>feature</code>/<code>steps</code> never throws; it surfaces a clear inline error under the
+    block.</p>
+  <div class="note">The agent invents the <em>plan</em>; the engine supplies the <em>proof</em>. Because the
+    grading runs against your live system, a green step is already in place &mdash; you don't re-verify it by
+    hand.</div>
+
   <h2>Tracked for later phases</h2>
   <ul>
     <li><strong>Retrieval (M2/Phase 3)</strong> &mdash; embed ingested files and prepend the top matches to the
       grounding at the marked seam.</li>
-    <li><strong>Playbook hand-off (M2)</strong> &mdash; route an emitted <code>```playbook</code> block into the
-      existing Configurator engine so its steps render and auto-grade.</li>
     <li><strong>Persistent memory + roster (M5)</strong> &mdash; per-project memory and multiple specialised
       agents with a share protocol.</li>
     <li><strong>Streaming</strong> &mdash; token-by-token output instead of the current single round-trip.</li>
