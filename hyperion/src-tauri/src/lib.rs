@@ -9,6 +9,7 @@
 // Strictly read-only with respect to the bOS system — never writes to it.
 
 mod agent;
+mod collab;
 mod diff;
 mod embed;
 mod entra;
@@ -773,6 +774,99 @@ fn context_suggest(
         .collect()
 }
 
+// ----------------------------- collab: PRs + timeline (M8) -----------------------------
+//
+// In-app pull requests (human narrative + AI docs), their comment/argue threads,
+// and the project timeline (collab.rs). Per-project, so every command requires an
+// open project (same "open a project first" contract as memory). Operator/agent
+// text is secret-scanned in `collab` before it lands in the unencrypted project DB.
+// Strictly local and read-only toward bOS.
+
+/// List the active project's pull requests (id, title, status, created_at, comment
+/// count — no bodies). Newest first.
+#[tauri::command]
+fn pr_list(projects: State<'_, Mutex<Projects>>) -> Result<Vec<Value>, String> {
+    let db = active_project_db(&projects)?;
+    collab::pr_list(&db)
+}
+
+/// Open a new pull request in the active project. `narrative` (human) and `ai_docs`
+/// (agent) are optional and secret-scanned. Returns its row id.
+#[tauri::command]
+fn pr_create(
+    title: String,
+    narrative: Option<String>,
+    ai_docs: Option<String>,
+    projects: State<'_, Mutex<Projects>>,
+) -> Result<Value, String> {
+    let db = active_project_db(&projects)?;
+    let id = collab::pr_create(&db, &title, narrative.as_deref(), ai_docs.as_deref())?;
+    Ok(json!({ "id": id }))
+}
+
+/// Fetch one PR by id (full record + its comment thread), or null if absent.
+#[tauri::command]
+fn pr_get(id: i64, projects: State<'_, Mutex<Projects>>) -> Result<Value, String> {
+    let db = active_project_db(&projects)?;
+    collab::pr_get(&db, id)
+}
+
+/// Append a comment to a PR's thread. Body is secret-scanned. Returns its id.
+#[tauri::command]
+fn pr_comment_add(
+    pr_id: i64,
+    author: String,
+    body: String,
+    projects: State<'_, Mutex<Projects>>,
+) -> Result<Value, String> {
+    let db = active_project_db(&projects)?;
+    let id = collab::pr_comment_add(&db, pr_id, &author, &body)?;
+    Ok(json!({ "id": id }))
+}
+
+/// Set a PR's lifecycle status (open|merged|closed). Returns whether it existed.
+#[tauri::command]
+fn pr_set_status(
+    id: i64,
+    status: String,
+    projects: State<'_, Mutex<Projects>>,
+) -> Result<bool, String> {
+    let db = active_project_db(&projects)?;
+    collab::pr_set_status(&db, id, &status)
+}
+
+/// Delete a PR and its comment thread from the active project. Returns whether it existed.
+#[tauri::command]
+fn pr_delete(id: i64, projects: State<'_, Mutex<Projects>>) -> Result<bool, String> {
+    let db = active_project_db(&projects)?;
+    collab::pr_delete(&db, id)
+}
+
+/// The active project's timeline (id, kind, summary, detail, created_at), newest
+/// first. Optional `limit` caps the number of returned events.
+#[tauri::command]
+fn timeline_list(
+    limit: Option<i64>,
+    projects: State<'_, Mutex<Projects>>,
+) -> Result<Vec<Value>, String> {
+    let db = active_project_db(&projects)?;
+    collab::timeline_list(&db, limit)
+}
+
+/// Append an event to the active project's timeline. `summary`/`detail` are
+/// secret-scanned. Returns the new row id.
+#[tauri::command]
+fn timeline_add(
+    kind: String,
+    summary: String,
+    detail: Option<String>,
+    projects: State<'_, Mutex<Projects>>,
+) -> Result<Value, String> {
+    let db = active_project_db(&projects)?;
+    let id = collab::timeline_add(&db, &kind, &summary, detail.as_deref())?;
+    Ok(json!({ "id": id }))
+}
+
 // ----------------------------- code standard (M3) -----------------------------
 //
 // The recommended project code standard (standard.rs) plus a deterministic audit
@@ -1523,6 +1617,14 @@ pub fn run() {
             context_add_file,
             context_delete,
             context_suggest,
+            pr_list,
+            pr_create,
+            pr_get,
+            pr_comment_add,
+            pr_set_status,
+            pr_delete,
+            timeline_list,
+            timeline_add,
             code_standard,
             code_audit,
             vault_status,

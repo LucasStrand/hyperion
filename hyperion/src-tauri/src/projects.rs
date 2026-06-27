@@ -168,7 +168,35 @@ fn init_db(conn: &Connection, name: &str) -> rusqlite::Result<()> {
              secret_cipher BLOB,
              notes TEXT,
              updated_at TEXT NOT NULL
-         );",
+         );
+         -- In-app pull requests (M8, Requirements #29/#30/#31). One row per PR: a
+         -- human-authored `narrative` and the AI-generated `ai_docs` (both optional
+         -- TEXT, scanned for plaintext secrets on write since they land in the
+         -- unencrypted project DB), plus a `status` lifecycle (open|merged|closed).
+         -- Additive + IF NOT EXISTS, so older project DBs self-heal on open() with no
+         -- data loss; an empty table simply means no PRs have been opened yet. Managed
+         -- by the `collab` module (CRUD) + the `pr_*` commands.
+         CREATE TABLE IF NOT EXISTS pr (
+             id INTEGER PRIMARY KEY AUTOINCREMENT,
+             title TEXT NOT NULL,
+             narrative TEXT,
+             ai_docs TEXT,
+             status TEXT NOT NULL DEFAULT 'open',
+             created_at TEXT NOT NULL
+         );
+         -- Comment / argue thread on a PR (M8). One row per comment, ordered by id;
+         -- the FK declares ownership (ON DELETE CASCADE) so the relationship is
+         -- explicit in the schema, but foreign_keys enforcement is a per-connection
+         -- PRAGMA left off (see context_chunk), so `collab` cascades these rows
+         -- MANUALLY when a PR is deleted. `body` is secret-scanned on write.
+         CREATE TABLE IF NOT EXISTS pr_comment (
+             id INTEGER PRIMARY KEY AUTOINCREMENT,
+             pr_id INTEGER NOT NULL REFERENCES pr(id) ON DELETE CASCADE,
+             author TEXT NOT NULL,
+             body TEXT NOT NULL,
+             created_at TEXT NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS pr_comment_pr ON pr_comment(pr_id);",
     )?;
     // Stamp the version only on a fresh DB — never downgrade a future schema
     // when an older binary self-heals the forward-compat tables on open().
