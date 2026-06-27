@@ -14,6 +14,8 @@ use std::path::{Path, PathBuf};
 use rusqlite::Connection;
 use serde_json::{json, Value};
 
+use crate::vault;
+
 /// Bump when the schema changes in a non-additive way.
 pub const SCHEMA_VERSION: &str = "1";
 
@@ -91,6 +93,11 @@ fn init_db(conn: &Connection, name: &str) -> rusqlite::Result<()> {
              id INTEGER PRIMARY KEY AUTOINCREMENT,
              mtype TEXT NOT NULL, slug TEXT NOT NULL, body TEXT NOT NULL, updated_at TEXT NOT NULL
          );
+         -- One row per slug. Added here (IF NOT EXISTS) so it also lands on DBs that
+         -- created the forward-compat `memory` table before this index existed; the
+         -- table was never populated before M5, so there can be no duplicate slugs
+         -- to violate it. Enables the atomic ON CONFLICT(slug) upsert in memory_set.
+         CREATE UNIQUE INDEX IF NOT EXISTS memory_slug_uq ON memory(slug);
          CREATE TABLE IF NOT EXISTS wiki_page (
              id INTEGER PRIMARY KEY AUTOINCREMENT,
              slug TEXT UNIQUE NOT NULL, title TEXT NOT NULL, html TEXT NOT NULL, updated_at TEXT NOT NULL
@@ -359,10 +366,17 @@ pub fn memory_list(db: &Path) -> Result<Vec<Value>, String> {
     Ok(out)
 }
 
+/// Upper bound on a stored note body (bytes). Generous for a rich operator note,
+/// but capped so a single note can't dominate the agent's prompt budget or bloat
+/// the DB. Enforced at write time in `memory_set`.
+const MAX_BODY_LEN: usize = 8192;
+
 /// Insert or replace a memory note, keyed by its (slugified) `slug`. Validates
-/// `mtype`, requires a non-empty body, and stamps `updated_at = datetime('now')`.
-/// Returns the row id. The forward-compat `memory` table has no `UNIQUE(slug)`,
-/// so this updates-then-inserts rather than relying on `ON CONFLICT`.
+/// `mtype`, requires a non-empty body within `MAX_BODY_LEN`, rejects bodies that
+/// look like a plaintext secret, and stamps `updated_at = datetime('now')`.
+/// Returns the row id. Atomic: a single `INSERT … ON CONFLICT(slug) DO UPDATE …
+/// RETURNING id` against the `memory_slug_uq` unique index, so two concurrent
+/// writers can't race between a separate update probe and an insert.
 pub fn memory_set(db: &Path, mtype: &str, slug: &str, body: &str) -> Result<i64, String> {
     if !valid_mtype(mtype) {
         return Err(format!(
@@ -374,28 +388,39 @@ pub fn memory_set(db: &Path, mtype: &str, slug: &str, body: &str) -> Result<i64,
     if body.is_empty() {
         return Err("memory note body cannot be empty".into());
     }
-    let conn = Connection::open(db).map_err(|e| format!("open db: {e}"))?;
-    let updated = conn
-        .execute(
-            "UPDATE memory SET mtype = ?1, body = ?2, updated_at = datetime('now') WHERE slug = ?3",
-            rusqlite::params![mtype, body, slug],
-        )
-        .map_err(|e| format!("update memory: {e}"))?;
-    if updated > 0 {
-        return conn
-            .query_row(
-                "SELECT id FROM memory WHERE slug = ?1",
-                rusqlite::params![slug],
-                |r| r.get::<_, i64>(0),
-            )
-            .map_err(|e| format!("read memory id: {e}"));
+    if body.len() > MAX_BODY_LEN {
+        return Err("memory note body is too long (max 8 KB)".into());
     }
-    conn.execute(
-        "INSERT INTO memory(mtype, slug, body, updated_at) VALUES (?1, ?2, ?3, datetime('now'))",
+    // Plaintext-secret guardrail (mirrors the `scan_secret` command for snapshots):
+    // a note is spliced verbatim into the agent prompt, so a real credential pasted
+    // here would leak into context. Reject only the high-confidence shapes (PEM key,
+    // AWS key, bearer token); the looser `credential_assignment` heuristic
+    // false-positives on ordinary notes like "token bucket: ..." and would block
+    // legitimate writes. Secrets belong in the encrypted vault, never in memory.
+    const HIGH_CONFIDENCE: [&str; 3] = ["private_key", "aws_access_key", "bearer_token"];
+    let has_secret = vault::scan_for_secrets(body).iter().any(|f| {
+        f.get("kind")
+            .and_then(|k| k.as_str())
+            .is_some_and(|k| HIGH_CONFIDENCE.contains(&k))
+    });
+    if has_secret {
+        return Err(
+            "this note looks like it contains a plaintext secret — store it in the encrypted vault, not in project memory".into(),
+        );
+    }
+    let conn = Connection::open(db).map_err(|e| format!("open db: {e}"))?;
+    conn.query_row(
+        "INSERT INTO memory(mtype, slug, body, updated_at)
+         VALUES (?1, ?2, ?3, datetime('now'))
+         ON CONFLICT(slug) DO UPDATE SET
+             mtype = excluded.mtype,
+             body = excluded.body,
+             updated_at = excluded.updated_at
+         RETURNING id",
         rusqlite::params![mtype, slug, body],
+        |r| r.get::<_, i64>(0),
     )
-    .map_err(|e| format!("insert memory: {e}"))?;
-    Ok(conn.last_insert_rowid())
+    .map_err(|e| format!("upsert memory: {e}"))
 }
 
 /// Delete a memory note by id. Returns whether a row was removed.
@@ -485,6 +510,39 @@ mod tests {
         // Delete is idempotent on the second call.
         assert!(memory_delete(&db, id).unwrap());
         assert!(!memory_delete(&db, id).unwrap());
+        assert!(memory_list(&db).unwrap().is_empty());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn memory_set_rejects_too_long_body() {
+        let (root, db) = fresh_db("mem_toolong");
+
+        // One byte over the cap is rejected with a clear message.
+        let huge = "x".repeat(MAX_BODY_LEN + 1);
+        let err = memory_set(&db, "project", "huge", &huge).unwrap_err();
+        assert!(err.contains("too long"), "got: {err}");
+        assert!(memory_list(&db).unwrap().is_empty());
+
+        // A body exactly at the cap is accepted.
+        let at_cap = "y".repeat(MAX_BODY_LEN);
+        assert!(memory_set(&db, "project", "atcap", &at_cap).is_ok());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn memory_set_rejects_plaintext_secret() {
+        let (root, db) = fresh_db("mem_secret");
+
+        // A pasted PEM private key is a high-confidence secret and must be refused.
+        let body = "-----BEGIN RSA PRIVATE KEY-----\nMIIabc123\n-----END RSA PRIVATE KEY-----";
+        let err = memory_set(&db, "security", "leaked-key", body).unwrap_err();
+        assert!(
+            err.contains("secret") || err.contains("vault"),
+            "got: {err}"
+        );
         assert!(memory_list(&db).unwrap().is_empty());
 
         let _ = std::fs::remove_dir_all(&root);

@@ -42,7 +42,7 @@ const api = {
 };
 
 const $ = (s) => document.querySelector(s), $$ = (s) => [...document.querySelectorAll(s)];
-function esc(s){return (''+s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+function esc(s){return (''+s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 
 // ---------- icons by node type ----------
 function icon(t){t=t||'';

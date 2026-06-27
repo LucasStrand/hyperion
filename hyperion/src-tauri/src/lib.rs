@@ -836,19 +836,34 @@ fn node_brief(s: &Store, n: &Value) -> String {
 
 /// Build a labeled, token-bounded block of the active project's memory notes for
 /// the agent's system prompt. These are *operator-authored* (entered in the UI),
-/// so unlike the `.bos`-derived grounding they are trusted context rather than
-/// untrusted data — but they are still kept small so a long note can't crowd out
-/// the question. Returns None when there are no notes. Never touches the vault.
+/// so unlike the `.bos`-derived grounding they are background facts about the
+/// project rather than untrusted data — but they are still kept small so a long
+/// note can't crowd out the question. Returns None when there are no notes. Never
+/// touches the vault.
 fn build_memory_block(notes: &[(String, String)]) -> Option<String> {
     if notes.is_empty() {
         return None;
     }
     const MAX: usize = 4000;
+    // Escape each note's fence delimiters and flatten its newlines exactly as
+    // `safe_grounding` (below) hardens the .bos data. A memory note is operator
+    // text, but it is still spliced verbatim into the system prompt, so a body
+    // containing `</bos-data>` must not be able to close the untrusted-data fence
+    // below, and a multi-line body must not be able to start its own top-level
+    // `# ` header line. Escaping `& < >` neutralizes the fence, and rewriting each
+    // `\n` to a continuation indent keeps every body on indented continuation
+    // lines — so the block is structurally inert regardless of its content.
+    let safe = |t: &str| {
+        t.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('\n', "\n  ")
+    };
     let mut out = String::from(
-        "Durable notes the operator saved for this project (persist across sessions; trust them):\n",
+        "Background facts about this project the operator saved (persist across sessions):\n",
     );
     for (mtype, body) in notes {
-        let line = format!("- [{}] {}\n", mtype, body.trim());
+        let line = format!("- [{}] {}\n", safe(mtype), safe(body.trim()));
         if out.chars().count() + line.chars().count() > MAX {
             out.push_str("…(memory truncated)\n");
             break;
@@ -901,9 +916,10 @@ async fn agent_ask(
         .replace('>', "&gt;");
 
     // Load the active project's persistent memory (if a project is open). These
-    // are operator-authored notes — trusted context — so they sit in their own
-    // labeled section ahead of the untrusted <bos-data> fence. A missing/empty
-    // memory table simply yields no section (an agent ask works without a project).
+    // are operator-authored notes — background facts, not instructions — so they
+    // sit in their own labeled section ahead of the untrusted <bos-data> fence,
+    // escaped (in build_memory_block) so a note can't break out of it. A missing/
+    // empty memory table simply yields no section (an ask works without a project).
     let memory_block = {
         let db = {
             let p = projects.lock().unwrap_or_else(|e| e.into_inner());
@@ -919,7 +935,7 @@ async fn agent_ask(
 
     let mut system = agent::INSTINCTS.to_string();
     if let Some(mem) = &memory_block {
-        system.push_str("\n\n# Project memory (operator-authored, trusted)\n");
+        system.push_str("\n\n# Project memory (operator-authored background facts)\n");
         system.push_str(mem);
     }
     system.push_str(&format!(
