@@ -23,9 +23,11 @@ use serde_json::{json, Value};
 
 /// One flagged deviation from the code standard. `path` is the source file (a
 /// repo-relative display path), `line` is 1-based, `rule` is the stable rule id,
-/// `message` explains the deviation and suggests the fix, and `severity` ranks it
-/// ("high" | "medium" | "low"). Serializes to a flat JSON object the renderer can
-/// list directly, matching the shape used by `suggest::Suggestion`.
+/// `message` explains the deviation, `severity` ranks it ("high" | "medium" |
+/// "low"), and `suggested_fix` is a short, concrete remediation (a fix
+/// instruction or before→after snippet) the UI can show next to the flaw.
+/// Serializes to a flat JSON object the renderer can list directly, matching the
+/// shape used by `suggest::Suggestion`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Finding {
     pub path: String,
@@ -33,6 +35,7 @@ pub struct Finding {
     pub rule: &'static str,
     pub message: String,
     pub severity: &'static str,
+    pub suggested_fix: String,
 }
 
 impl Finding {
@@ -42,6 +45,7 @@ impl Finding {
         rule: &'static str,
         severity: &'static str,
         message: impl Into<String>,
+        suggested_fix: impl Into<String>,
     ) -> Self {
         Finding {
             path: path.to_string(),
@@ -49,6 +53,7 @@ impl Finding {
             rule,
             severity,
             message: message.into(),
+            suggested_fix: suggested_fix.into(),
         }
     }
 }
@@ -127,6 +132,7 @@ fn audit_file(path: &str, contents: &str, lang: Lang, out: &mut Vec<Finding>) {
                 "tab-indentation",
                 "low",
                 "Indent with spaces, not tabs (run `cargo fmt` / format the file).",
+                "Replace the leading tab(s) with spaces (`cargo fmt`, or set the editor to insert spaces).",
             ));
         }
 
@@ -151,6 +157,7 @@ fn audit_file(path: &str, contents: &str, lang: Lang, out: &mut Vec<Finding>) {
             "missing-trailing-newline",
             "low",
             "File should end with a single trailing newline.",
+            "Add a single newline (`\\n`) at the end of the file.",
         ));
     }
 }
@@ -164,6 +171,8 @@ fn audit_rust_line(path: &str, line_no: usize, line: &str, out: &mut Vec<Finding
             "medium",
             "Avoid `.unwrap()` in non-test code — propagate with `?` or map to a \
              `Result<_, String>` at the command layer.",
+            "Replace `value.unwrap()` with `value?` (when in a `Result` fn) or \
+             `value.unwrap_or(default)` / `value.ok_or(\"…\")?`.",
         ));
     }
     if line.contains(".expect(") {
@@ -174,6 +183,8 @@ fn audit_rust_line(path: &str, line_no: usize, line: &str, out: &mut Vec<Finding
             "medium",
             "Avoid `.expect(...)` in non-test code — return a descriptive \
              `Result<_, String>` instead of panicking.",
+            "Replace `value.expect(\"msg\")` with `value.map_err(|e| \
+             format!(\"msg: {e}\"))?` or `value.ok_or(\"msg\")?`.",
         ));
     }
     if let Some(mac) = PANIC_MACROS.iter().find(|m| line.contains(*m)) {
@@ -186,6 +197,7 @@ fn audit_rust_line(path: &str, line_no: usize, line: &str, out: &mut Vec<Finding
                 "Avoid `{mac}` in non-test code — surface the condition as an error \
                  (`Result<_, String>`) so the app never crashes."
             ),
+            format!("Replace `{mac}` with an early `return Err(\"…\".to_string())` (or `?`)."),
         ));
     }
 }
@@ -198,6 +210,7 @@ fn audit_ts_line(path: &str, line_no: usize, line: &str, out: &mut Vec<Finding>)
             "no-console",
             "low",
             "Remove the stray `console.log(...)` before shipping.",
+            "Delete the `console.log(...)` call (or gate it behind a debug flag).",
         ));
     }
 }
@@ -441,10 +454,53 @@ mod tests {
         assert_eq!(a, b, "audit must be deterministic");
 
         let v = serde_json::to_value(&a[0]).unwrap();
-        for key in ["path", "line", "rule", "message", "severity"] {
+        for key in [
+            "path",
+            "line",
+            "rule",
+            "message",
+            "severity",
+            "suggested_fix",
+        ] {
             assert!(v.get(key).is_some(), "missing {key} in {v}");
         }
         assert_eq!(v.get("path").unwrap(), "src-tauri/src/lib.rs");
+    }
+
+    #[test]
+    fn every_finding_carries_a_non_empty_suggested_fix() {
+        // One synthetic batch that trips every rule at least once: Rust pattern
+        // rules + tab indentation, and a TypeScript file for the console rule and
+        // a missing trailing newline.
+        let rs = "fn run() {\n\tlet a = x.unwrap();\n    let b = y.expect(\"x\");\n    panic!(\"boom\");\n}\n";
+        let ts = "function f() {\n  console.log(\"debug\");\n}"; // no trailing newline
+        let f = audit(&[
+            ("src-tauri/src/lib.rs".into(), rs.into()),
+            ("src/main.ts".into(), ts.into()),
+        ]);
+        // Confirm we actually exercised every rule id.
+        for rule in [
+            "no-unwrap",
+            "no-expect",
+            "no-panic",
+            "no-console",
+            "tab-indentation",
+            "missing-trailing-newline",
+        ] {
+            assert!(
+                has(&f, rule),
+                "rule {rule} not triggered; got: {:?}",
+                rules(&f)
+            );
+        }
+        // Each finding must carry a concrete, non-empty fix.
+        for finding in &f {
+            assert!(
+                !finding.suggested_fix.trim().is_empty(),
+                "rule {} has an empty suggested_fix",
+                finding.rule
+            );
+        }
     }
 
     #[test]
