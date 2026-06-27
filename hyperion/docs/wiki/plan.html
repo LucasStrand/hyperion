@@ -85,7 +85,7 @@
     <div class="sub">Enterprise IoT workbench for ComfortClick bOS, operated by an AI agent. The full vision, phased — crossed off as it lands.</div>
     <div class="overall">
       <div class="bar"><i id="overallbar"></i></div>
-      <div class="pct" id="overallpct">56%</div>
+      <div class="pct" id="overallpct">58%</div>
     </div>
     <div class="legend">
       <span><i class="dot done"></i> Done</span>
@@ -198,7 +198,7 @@
         <li class="done">State what + pedagogical steps + finished code</li>
         <li class="done">Emit runnable playbook JSON</li>
         <li class="done">Route emitted playbook into the auto-grader</li>
-        <li class="partial">RAG over context (grounds on .bos; embeddings to come)</li>
+        <li class="done">RAG over context — cosine embeddings + keyword fallback</li>
         <li class="todo">Auto-select MCP/skills by context</li>
       </ul>
     </div>
@@ -351,7 +351,7 @@
 <script>
   // Animate the overall bar to its target on load (purely cosmetic).
   (function(){
-    var pct = 56;
+    var pct = 58;
     requestAnimationFrame(function(){
       var el = document.getElementById('overallbar');
       if (el) el.style.width = pct + '%';
