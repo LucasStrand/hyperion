@@ -406,17 +406,12 @@ pub fn memory_set(db: &Path, mtype: &str, slug: &str, body: &str) -> Result<i64,
     }
     // Plaintext-secret guardrail (mirrors the `scan_secret` command for snapshots):
     // a note is spliced verbatim into the agent prompt, so a real credential pasted
-    // here would leak into context. Reject only the high-confidence shapes (PEM key,
-    // AWS key, bearer token); the looser `credential_assignment` heuristic
-    // false-positives on ordinary notes like "token bucket: ..." and would block
-    // legitimate writes. Secrets belong in the encrypted vault, never in memory.
-    const HIGH_CONFIDENCE: [&str; 3] = ["private_key", "aws_access_key", "bearer_token"];
-    let has_secret = vault::scan_for_secrets(body).iter().any(|f| {
-        f.get("kind")
-            .and_then(|k| k.as_str())
-            .is_some_and(|k| HIGH_CONFIDENCE.contains(&k))
-    });
-    if has_secret {
+    // here would leak into context. The shared `body_has_plaintext_secret` guard
+    // rejects the high-confidence structural shapes (PEM key, AWS key, bearer token)
+    // *and* a bare vendor-prefixed key (e.g. the app's own `sk-or-…`), while the
+    // looser `credential_assignment` heuristic — which false-positives on notes like
+    // "token bucket: ..." — is intentionally excluded. Secrets belong in the vault.
+    if vault::body_has_plaintext_secret(body) {
         return Err(
             "this note looks like it contains a plaintext secret — store it in the encrypted vault, not in project memory".into(),
         );

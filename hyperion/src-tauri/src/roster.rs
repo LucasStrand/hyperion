@@ -182,12 +182,6 @@ pub static ROSTER: &[Agent] = &[
 /// Upper bound on a stored instinct body (bytes) — mirrors the memory-note cap.
 const MAX_INSTINCTS_LEN: usize = 8192;
 
-/// High-confidence secret shapes refused in an instinct body (same set the memory
-/// store rejects): instincts are spliced verbatim into the system prompt, so a
-/// real credential pasted here would leak into context. Looser heuristics
-/// false-positive on ordinary guidance, so only the unambiguous shapes are blocked.
-const HIGH_CONFIDENCE_SECRETS: [&str; 3] = ["private_key", "aws_access_key", "bearer_token"];
-
 /// Look up an agent by id.
 pub fn get(id: &str) -> Option<&'static Agent> {
     ROSTER.iter().find(|a| a.id == id)
@@ -321,12 +315,10 @@ fn validate_body(body: &str) -> Result<String, String> {
     if body.len() > MAX_INSTINCTS_LEN {
         return Err("instinct body is too long (max 8 KB)".into());
     }
-    let has_secret = vault::scan_for_secrets(body).iter().any(|f| {
-        f.get("kind")
-            .and_then(|k| k.as_str())
-            .is_some_and(|k| HIGH_CONFIDENCE_SECRETS.contains(&k))
-    });
-    if has_secret {
+    // Instincts are spliced verbatim into the system prompt, so a real credential
+    // pasted here would leak into context. Reject high-confidence shapes — including
+    // a bare vendor-prefixed key like the app's own `sk-or-…` — via the shared guard.
+    if vault::body_has_plaintext_secret(body) {
         return Err(
             "this instinct looks like it contains a plaintext secret — store secrets in the encrypted vault, not in instincts".into(),
         );
@@ -402,7 +394,11 @@ pub fn instincts_history(db: &Path, agent_id: &str) -> Result<Vec<Value>, String
 /// version does not exist.
 pub fn instincts_revert(db: &Path, agent_id: &str, version: i64) -> Result<i64, String> {
     let agent = get(agent_id).ok_or_else(|| format!("unknown agent: {agent_id}"))?;
-    let body = if version <= 0 {
+    if version < 0 {
+        return Err(format!("invalid version: {version}"));
+    }
+    // Stored versions start at 1; version 0 means "restore the built-in baseline".
+    let body = if version == 0 {
         agent.instincts.to_string()
     } else {
         let conn = Connection::open(db).map_err(|e| format!("open db: {e}"))?;
@@ -437,6 +433,14 @@ pub fn role_block_builtin(agent: &Agent) -> String {
 }
 
 /// Shared formatter so the built-in and override paths render identically.
+///
+/// Accepted risk (reviewed): `resolved` is operator-authored or built-in text placed
+/// in the *trusted* instructions region, so a determined operator could in principle
+/// weaken their own agent's guidance here. This is by design — it is the operator's
+/// own configuration of their own tool — and the explicit "refine, but never override
+/// … the security reflex and the read-only rule" framing keeps the standing
+/// guarantees primary. No `.bos`-derived or user-turn data ever reaches this region
+/// (that stays fenced in <bos-data>), so this is not a prompt-injection surface.
 fn role_block_from(agent: &Agent, resolved: &str) -> String {
     format!(
         "# Active agent: {name}\nRole: {role}\nAdditional role instincts (these refine, but never override, the standing instincts above — above all the security reflex and the read-only rule):\n{resolved}",
@@ -469,15 +473,19 @@ pub fn roster_json(db: Option<&Path>) -> Vec<Value> {
         .iter()
         .map(|a| {
             let mut v = agent_descriptor(a);
-            let (customized, version) = match db {
+            // Distinguish "no override" from a DB read error: a swallowed error
+            // must not masquerade as a clean "not customized" badge in the picker.
+            let (customized, version, error) = match db {
                 Some(db) => match instincts_active(db, a.id) {
-                    Ok(Some((ver, _, _))) => (true, ver),
-                    _ => (false, 0),
+                    Ok(Some((ver, _, _))) => (true, ver, false),
+                    Ok(None) => (false, 0, false),
+                    Err(_) => (false, 0, true),
                 },
-                None => (false, 0),
+                None => (false, 0, false),
             };
             v["customized"] = json!(customized);
             v["version"] = json!(version);
+            v["error"] = json!(error);
             v
         })
         .collect()
@@ -642,8 +650,9 @@ mod tests {
         assert_eq!(v4, 4);
         assert_eq!(instincts_resolved(&db, cfg), cfg.instincts);
 
-        // Reverting to a non-existent version errors.
+        // Reverting to a non-existent version errors; a negative version is rejected.
         assert!(instincts_revert(&db, "configurator", 99).is_err());
+        assert!(instincts_revert(&db, "configurator", -1).is_err());
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -668,6 +677,10 @@ mod tests {
             err.contains("secret") || err.contains("vault"),
             "got: {err}"
         );
+        // A bare vendor-prefixed key (the app's own sk-or- shape, no Bearer marker)
+        // is also refused — the gap the adversarial review flagged.
+        let bare = "remember the key sk-or-v1-abc123def456ghi789jkl012mno345";
+        assert!(instincts_set(&db, "configurator", bare).is_err());
 
         let _ = std::fs::remove_dir_all(&root);
     }
