@@ -63,10 +63,22 @@
       are still rejected with a clear message. Max 4&nbsp;MB per file.</li>
     <li><b>Chunk</b> &mdash; split into ~1500-character pieces on line boundaries, with a small overlap so a
       fact straddling a boundary stays findable. Unicode-correct; always terminates.</li>
-    <li><b>Retrieve</b> &mdash; a dependency-free keyword overlap ranks chunks against the question and the
-      top few are injected. (The embedding/vector ranker is the next unit &mdash; the vector-store choice is
-      still open.)</li>
+    <li><b>Retrieve</b> &mdash; when an embedding key is configured, chunks are ranked by <b>cosine similarity</b>
+      over stored vectors (true semantic retrieval, M2); otherwise it falls back to the dependency-free keyword
+      overlap ranker, so offline operation and CI stay green. Either way the top few chunks are injected.</li>
   </ul>
+
+  <h2>Embedding retrieval (M2)</h2>
+  <p>Retrieval upgrades from keyword overlap to cosine top-k over per-chunk embeddings. The embedding layer is
+    <b>optional and opt-in</b>: it activates only when <code>HYPERION_EMBED_API_KEY</code> is set (with optional
+    <code>HYPERION_EMBED_BASE_URL</code> / <code>HYPERION_EMBED_MODEL</code> for any OpenAI-compatible endpoint).
+    Vectors are written best-effort <em>after</em> ingestion commits, so an embedding failure can never fail an
+    ingest; a single bad/stale-dimension row is skipped, never the whole query.</p>
+  <div class="warn"><b>Egress:</b> this is the only path in Hyperion that sends content off the machine. When an
+    embedding key is configured, ingested chunk text (at index time) and your question (at query time) are sent
+    to the configured endpoint. It is off by default; the base URL is restricted to <code>http(s)://</code> so a
+    typo'd or hostile scheme can't carry the API key/context elsewhere. The API key is read from the environment
+    and never logged; any error text surfaced to the UI is secret-scrubbed first.</div>
 
   <h2>Security: retrieved text is untrusted</h2>
   <div class="warn">A datasheet or CSV can carry injected instructions (<em>"ignore your rules and…"</em>).
@@ -99,10 +111,11 @@
     <tr><td><code>context_list</code></td><td>Ingested files (name, kind, size, chunk count) &mdash; never the content.</td></tr>
     <tr><td><code>context_delete</code></td><td>Remove a file and its chunks.</td></tr>
   </table>
-  <p>Storage is two SQLite tables in the project DB: <code>context_file</code> (the extracted text) and
-    <code>context_chunk</code> (one row per retrievable chunk, deleted with its file).</p>
+  <p>Storage is three SQLite tables in the project DB: <code>context_file</code> (the extracted text),
+    <code>context_chunk</code> (one row per retrievable chunk, deleted with its file), and
+    <code>context_embedding</code> (a little-endian <code>f32</code> vector per chunk, cascade-deleted with it).</p>
 
-  <div class="foot">Hyperion · Phase 3 (M1) unit 1 of N · read-only toward bOS; secrets stay in the vault.
+  <div class="foot">Hyperion · Phase 3 (M1 ingestion + M2 embedding RAG) · read-only toward bOS; secrets stay in the vault.
     See also <a href="agent.html">The Agent</a> · <a href="memory.html">Project Memory</a> ·
     <a href="roster.html">Agent Roster</a> · <a href="plan.html">Plan dashboard</a>.</div>
 </div>

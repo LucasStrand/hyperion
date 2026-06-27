@@ -627,10 +627,22 @@ fn embed_file_chunks(conn: &mut Connection, file_id: i64) {
         return;
     }
     let texts: Vec<&str> = rows.iter().map(|(_, t)| t.as_str()).collect();
-    let (model, vectors) = match embed::embed(&texts) {
-        Ok(out) => out,
-        Err(_) => return, // not configured / network error -> keyword fallback
-    };
+    // Embed in batches: an OpenAI-compatible API caps inputs-per-request, so a
+    // large file must be split or it gets a blanket HTTP 400 and silently falls
+    // back to keyword. Any batch error aborts the whole embed (keyword fallback).
+    let mut model = String::new();
+    let mut vectors: Vec<Vec<f32>> = Vec::with_capacity(texts.len());
+    for batch in texts.chunks(embed::MAX_BATCH) {
+        match embed::embed(batch) {
+            Ok((m, vs)) => {
+                if model.is_empty() {
+                    model = m;
+                }
+                vectors.extend(vs);
+            }
+            Err(_) => return, // not configured / network error -> keyword fallback
+        }
+    }
     if vectors.len() != rows.len() {
         return;
     }
@@ -796,15 +808,20 @@ fn rank_chunks_by_cosine(
     qvec: &[f32],
     k: usize,
 ) -> Option<Vec<(String, String)>> {
+    // Prefilter on the stored dimension so stale-model rows (a different embedding
+    // dim after a HYPERION_EMBED_MODEL change) are skipped at the storage layer
+    // rather than loaded and discarded in Rust. The blob length is re-checked
+    // below as defense against a corrupt row whose `dim` column lies.
     let mut stmt = conn
         .prepare(
             "SELECT cf.name, cc.text, ce.vec FROM context_embedding ce
              JOIN context_chunk cc ON cc.id = ce.chunk_id
-             JOIN context_file cf ON cf.id = cc.file_id",
+             JOIN context_file cf ON cf.id = cc.file_id
+             WHERE ce.dim = ?1",
         )
         .ok()?;
     let rows = stmt
-        .query_map([], |r| {
+        .query_map(rusqlite::params![qvec.len() as i64], |r| {
             Ok((
                 r.get::<_, String>(0)?,
                 r.get::<_, String>(1)?,

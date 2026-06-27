@@ -302,8 +302,8 @@ fn kill_tree(child: &mut std::process::Child) {
 }
 
 /// Last `n` characters of `s` (char-safe), trimmed — for surfacing stderr/error
-/// tails without risking a panic on a multi-byte boundary.
-fn tail_chars(s: &str, n: usize) -> String {
+/// tails without risking a panic on a multi-byte boundary. Shared with `embed.rs`.
+pub(crate) fn tail_chars(s: &str, n: usize) -> String {
     let t = s.trim();
     let count = t.chars().count();
     if count <= n {

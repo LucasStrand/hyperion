@@ -613,13 +613,17 @@ fn context_list(projects: State<'_, Mutex<Projects>>) -> Result<Vec<Value>, Stri
 /// Ingest a file (by absolute path) into the active project: read it, extract text,
 /// chunk, and store. Returns `{id, name, kind, chunks}`. Rejects unsupported kinds.
 #[tauri::command]
-fn context_add_file(path: String, projects: State<'_, Mutex<Projects>>) -> Result<Value, String> {
+async fn context_add_file(
+    path: String,
+    projects: State<'_, Mutex<Projects>>,
+) -> Result<Value, String> {
     let db = active_project_db(&projects)?;
     let p = Path::new(&path);
     let name = p
         .file_name()
         .and_then(|n| n.to_str())
-        .ok_or_else(|| "could not read the file name".to_string())?;
+        .ok_or_else(|| "could not read the file name".to_string())?
+        .to_string();
     // Bound the read so a huge/binary file can't be slurped before validation.
     let meta = std::fs::metadata(p).map_err(|e| format!("read file: {e}"))?;
     // Compare in u64 — `meta.len()` is u64, so casting it down to usize would
@@ -631,7 +635,13 @@ fn context_add_file(path: String, projects: State<'_, Mutex<Projects>>) -> Resul
         ));
     }
     let bytes = std::fs::read(p).map_err(|e| format!("read file: {e}"))?;
-    projects::context_add(&db, name, &bytes)
+    // context_add chunks, secret-scans, and (when an embedding key is configured)
+    // makes a blocking network round-trip to embed the chunks. Run it on the
+    // blocking pool so a slow/unreachable embedding endpoint can't stall the
+    // async event loop. Mirrors the spawn_blocking used by agent_ask retrieval.
+    tauri::async_runtime::spawn_blocking(move || projects::context_add(&db, &name, &bytes))
+        .await
+        .map_err(|e| format!("ingest task failed: {e}"))?
 }
 
 /// Delete an ingested context file (and its chunks) by id from the active project.
