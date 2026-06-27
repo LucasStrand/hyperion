@@ -98,6 +98,19 @@ fn init_db(conn: &Connection, name: &str) -> rusqlite::Result<()> {
          -- table was never populated before M5, so there can be no duplicate slugs
          -- to violate it. Enables the atomic ON CONFLICT(slug) upsert in memory_set.
          CREATE UNIQUE INDEX IF NOT EXISTS memory_slug_uq ON memory(slug);
+         -- Versioned, append-only per-agent instinct overrides (M5). One row per
+         -- (agent_id, version); the built-in role instincts are the version-0
+         -- baseline (in-binary, not stored), and each operator save appends a new
+         -- version. A revert copies an old body forward as a new version, so
+         -- history is never destroyed. Created here (IF NOT EXISTS) so older
+         -- project DBs self-heal on open; empty until an agent is customized.
+         CREATE TABLE IF NOT EXISTS agent_instincts (
+             id INTEGER PRIMARY KEY AUTOINCREMENT,
+             agent_id TEXT NOT NULL, version INTEGER NOT NULL,
+             body TEXT NOT NULL, updated_at TEXT NOT NULL
+         );
+         CREATE UNIQUE INDEX IF NOT EXISTS agent_instincts_ver_uq
+             ON agent_instincts(agent_id, version);
          CREATE TABLE IF NOT EXISTS wiki_page (
              id INTEGER PRIMARY KEY AUTOINCREMENT,
              slug TEXT UNIQUE NOT NULL, title TEXT NOT NULL, html TEXT NOT NULL, updated_at TEXT NOT NULL

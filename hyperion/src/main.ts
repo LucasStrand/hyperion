@@ -38,7 +38,13 @@ const api = {
   entraSignOut: () => invoke("entra_sign_out"),
   // agent runtime adapter (src-tauri/src/agent.rs)
   agentStatus: () => invoke("agent_status"),
-  agentAsk:    (question, focusPath) => invoke("agent_ask", { question, focusPath }),
+  agentAsk:    (question, focusPath, agentId) => invoke("agent_ask", { question, focusPath, agentId }),
+
+  agentRoster:           () => invoke("agent_roster"),
+  agentInstinctsGet:     (agentId) => invoke("agent_instincts_get", { agentId }),
+  agentInstinctsSet:     (agentId, body) => invoke("agent_instincts_set", { agentId, body }),
+  agentInstinctsHistory: (agentId) => invoke("agent_instincts_history", { agentId }),
+  agentInstinctsRevert:  (agentId, version) => invoke("agent_instincts_revert", { agentId, version }),
 };
 
 const $ = (s) => document.querySelector(s), $$ = (s) => [...document.querySelectorAll(s)];
@@ -422,7 +428,7 @@ async function refreshAgentStatus(){
     else { b.textContent='no runtime'; b.classList.add('off'); }
   }catch(e){ b.textContent='status error'; b.classList.add('off'); }
 }
-function openAgent(){ $('#agent').classList.add('on'); refreshAgentStatus(); if(memOpen) refreshMemory(); $('#aq').focus(); }
+function openAgent(){ $('#agent').classList.add('on'); refreshAgentStatus(); refreshRoster(); if(memOpen) refreshMemory(); $('#aq').focus(); }
 function closeAgent(){ $('#agent').classList.remove('on'); }
 // Minimal renderer: escape everything, then turn ``` fenced blocks into <pre>.
 // A ```playbook fence is tagged and gets a "Load playbook" button that routes the
@@ -463,12 +469,25 @@ function loadPlaybookFromBlock(pid, btn){
   catch(e){ if(err) err.textContent='Could not load playbook — '+e.message+'.'; return; }
   if(btn) btn.textContent='✓ Loaded';
 }
-function addMsg(role, text, runtime){
+// `meta` (bot only) carries the chosen agent + share-protocol handoffs returned by
+// agent_ask, so each answer shows who replied and whether the Coordinator routed it.
+function addMsg(role, text, runtime, meta){
   const box=document.createElement('div'); box.className='amsg '+role;
   let inner='';
-  if(role==='bot') inner+='<div class="who">'+esc(runtime||'agent')+'</div>';
+  if(role==='bot'){
+    let who=esc(runtime||'agent');
+    if(meta && meta.agent){
+      who+=' &middot; <span class="aagentname">'+esc(meta.agent.name)+'</span>'
+        + (meta.routed ? ' <span class="mut">(auto-routed)</span>' : '');
+    }
+    inner+='<div class="who">'+who+'</div>';
+  }
   else if(role==='err') inner+='<div class="who">error</div>';
   inner+=(role==='bot') ? renderAnswer(text) : esc(text);
+  if(role==='bot' && meta && Array.isArray(meta.handoffs) && meta.handoffs.length){
+    inner+='<div class="ahandoff">Consider also: '
+      + meta.handoffs.map(h=>'<span class="achip">'+esc(h.name)+'</span>').join(' ')+'</div>';
+  }
   box.innerHTML=inner;
   const m=$('#amsgs'); m.appendChild(box); m.scrollTop=m.scrollHeight;
   return box;
@@ -477,12 +496,13 @@ async function sendAsk(){
   if(agentBusy) return;
   const ta=$('#aq'); const q=ta.value.trim(); if(!q) return;
   const focusPath=($('#afocus').checked && CUR && CUR.path) ? CUR.path : null;
+  const sel=$('#aagent'); const agentId=(sel && sel.value) ? sel.value : null;
   addMsg('user', q); ta.value='';
   agentBusy=true; const btn=$('#asend'); btn.disabled=true; btn.textContent='Asking…';
   const pending=addMsg('note','thinking…');
   try{
-    const res=await api.agentAsk(q, focusPath);
-    pending.remove(); addMsg('bot', res.answer, res.runtime);
+    const res=await api.agentAsk(q, focusPath, agentId);
+    pending.remove(); addMsg('bot', res.answer, res.runtime, res);
   }catch(e){
     pending.remove(); addMsg('err', ''+e);
   }finally{
@@ -530,6 +550,93 @@ async function saveMemory(){
     $('#amemslug').value=''; $('#amembodytext').value='';
     await refreshMemory();
   }catch(e){ alert('Save note failed: '+e); }
+}
+
+// ---------- agent roster + versioned instincts (Phase 2, M5) ----------
+// The co-pilot is a roster of role-specialized agents. The "who answers" picker in
+// the footer chooses the agent for the next ask (blank = the Coordinator routes);
+// the collapsible panel views/edits each agent's instincts, which are versioned
+// per project (append-only; revert is non-destructive). Escape everything rendered.
+let rosOpen=false, rosAgents=[], rosCur=null;
+async function refreshRoster(){
+  try{ rosAgents=await api.agentRoster(); }catch(e){ rosAgents=[]; }
+  // "Who answers" picker: Auto (Coordinator) + the specialists.
+  const pick=$('#aagent');
+  if(pick){
+    const keep=pick.value;
+    pick.innerHTML='<option value="">Auto (Coordinator routes)</option>'
+      + rosAgents.filter(a=>!a.coordinator)
+                 .map(a=>'<option value="'+esc(a.id)+'">'+esc(a.name)+'</option>').join('');
+    pick.value=keep||'';
+  }
+  // Instincts editor agent select: all agents, flagged when customized.
+  const sel=$('#arosagent');
+  if(sel){
+    const keep=sel.value||rosCur||(rosAgents[0]&&rosAgents[0].id)||'';
+    sel.innerHTML=rosAgents.map(a=>'<option value="'+esc(a.id)+'">'+esc(a.name)
+      +(a.customized?(' • v'+esc(a.version)):'')+'</option>').join('');
+    if(keep) sel.value=keep;
+  }
+  if(rosOpen) await loadInstincts();
+}
+function toggleRos(){
+  rosOpen=!rosOpen;
+  $('#agentros').classList.toggle('open',rosOpen);
+  $('#arosbodywrap').style.display=rosOpen?'block':'none';
+  if(rosOpen) refreshRoster();
+}
+async function loadInstincts(){
+  const sel=$('#arosagent'); if(!sel||!sel.value) return;
+  rosCur=sel.value;
+  $('#aroshist').innerHTML='';
+  try{
+    const d=await api.agentInstinctsGet(rosCur);
+    $('#arosrole').textContent=d.role||'';
+    $('#arosbody').value=d.body||'';
+    $('#arosver').textContent = d.customized
+      ? ('custom v'+d.version+(d.updated_at?(' · '+d.updated_at):''))
+      : 'built-in default';
+  }catch(e){
+    // No project open (or read error): show the built-in role text read-only-ish.
+    const a=rosAgents.find(x=>x.id===rosCur);
+    $('#arosrole').textContent=a?a.role:'';
+    $('#arosbody').value='';
+    $('#arosver').textContent='Open a project to view and edit instincts.';
+  }
+}
+async function saveInstincts(){
+  if(!rosCur) return;
+  const body=$('#arosbody').value.trim();
+  if(!body){ alert('Instinct body cannot be empty.'); return; }
+  try{
+    const r=await api.agentInstinctsSet(rosCur, body);
+    await refreshRoster();
+    $('#arosver').textContent='saved → custom v'+r.version;
+  }catch(e){ alert('Save instincts failed: '+e); }
+}
+async function revertInstincts(){
+  if(!rosCur) return;
+  if(!confirm('Revert this agent to its built-in default instincts? (kept as a new version)')) return;
+  try{ await api.agentInstinctsRevert(rosCur, 0); await refreshRoster(); await loadInstincts(); }
+  catch(e){ alert('Revert failed: '+e); }
+}
+async function showInstinctHistory(){
+  if(!rosCur) return;
+  const box=$('#aroshist');
+  try{
+    const hist=await api.agentInstinctsHistory(rosCur);
+    if(!hist.length){
+      box.innerHTML='<div class="mut" style="font-size:12px;padding:2px">No saved versions yet — using the built-in default.</div>';
+      return;
+    }
+    box.innerHTML=hist.map(h=>'<div class="aroshrow">'
+      +'<button type="button" class="arosrev" data-v="'+esc(h.version)+'">revert to this</button>'
+      +'<b>v'+esc(h.version)+'</b> <span class="mut">'+esc(h.updated_at)+' · '+esc(h.chars)+' chars</span>'
+      +'<div class="mbody">'+esc(h.preview)+(h.chars>120?'…':'')+'</div></div>').join('');
+    $$('#aroshist .arosrev').forEach(b=>b.onclick=async()=>{
+      try{ await api.agentInstinctsRevert(rosCur, Number(b.dataset.v)); await refreshRoster(); await loadInstincts(); }
+      catch(e){ alert('Revert failed: '+e); }});
+  }catch(e){ box.innerHTML='<div class="pberr">'+esc(''+e)+'</div>'; }
 }
 
 Object.assign(window, { navigate, gotoStep, closeGuide, showNode, showDiff, closeVault, closeAgent, loadPlaybookFromBlock });
@@ -635,6 +742,13 @@ async function init(){
   // agent memory (collapsible)
   $('#amemtoggle').onclick=toggleMem;
   $('#amemsave').onclick=saveMemory;
+  // agent roster + instincts (collapsible)
+  $('#arostoggle').onclick=toggleRos;
+  $('#arosagent').onchange=loadInstincts;
+  $('#arossave').onclick=saveInstincts;
+  $('#arosrevert').onclick=revertInstincts;
+  $('#aroshistbtn').onclick=showInstinctHistory;
   refreshAgentStatus();
+  refreshRoster();
 }
 init();
