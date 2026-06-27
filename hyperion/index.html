@@ -169,7 +169,11 @@ border-left:1px solid var(--line);box-shadow:-8px 0 30px rgba(0,0,0,.16);display
 .amsg .who{font-size:10px;font-weight:700;opacity:.55;margin-bottom:3px;text-transform:uppercase;letter-spacing:.04em}
 .amsg pre{background:#0d1b2a;color:#dbe7f3;padding:8px 10px;border-radius:6px;overflow:auto;font-family:Consolas,ui-monospace,monospace;font-size:11.5px;margin:6px 0;white-space:pre}
 .amsg pre.pb{border:1px solid #e8a33d}
-.amsg .pbtag{display:inline-block;font-size:10px;font-weight:700;color:#9a6700;background:#fff5e0;border:1px solid #f0d28a;border-radius:8px;padding:0 7px;margin:6px 0 0}
+.amsg .pbtag{display:inline-flex;align-items:center;gap:8px;font-size:10px;font-weight:700;color:#9a6700;background:#fff5e0;border:1px solid #f0d28a;border-radius:8px;padding:1px 7px;margin:6px 0 0}
+.amsg .pbload{font:inherit;font-size:10px;font-weight:700;padding:1px 9px;border:1px solid var(--acc);background:var(--acc);color:#fff;border-radius:8px;cursor:pointer}
+.amsg .pbload:hover{filter:brightness(1.08)}
+.amsg .pberr{color:#b3261e;font-size:11px;margin:4px 0 0}
+.amsg .pberr:empty{display:none}
 .afoot{border-top:1px solid var(--line);padding:8px;display:flex;flex-direction:column;gap:6px;background:#fff}
 .afoot textarea{width:100%;resize:vertical;min-height:56px;padding:6px 8px;border:1px solid var(--line);border-radius:6px;font:inherit}
 .arow{display:flex;align-items:center;gap:8px}

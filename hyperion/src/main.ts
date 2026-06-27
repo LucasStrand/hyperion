@@ -225,12 +225,23 @@ function usagesView(){
 
 // ---------- guide (playbooks) ----------
 let PB=null, STEP=-1;
-async function loadGuide(file){
-  PB=await api.playbook(file); STEP=-1;
+// Fetch a playbook file by name, then hand the parsed object to the shared
+// renderer/auto-grader below.
+async function loadGuide(file){ loadGuideFromObject(await api.playbook(file)); }
+// Render an already-parsed playbook OBJECT into the #guide panel and auto-grade
+// each step against the live .bos. Used by loadGuide (the file dropdown) and by
+// the agent dock's "Load playbook" button (an emitted ```playbook block).
+// Throws on a structurally invalid playbook so callers can surface the message.
+function loadGuideFromObject(pb){
+  if(!pb || typeof pb!=='object' || Array.isArray(pb)) throw new Error('not a playbook object');
+  if(typeof pb.feature!=='string' || !pb.feature.trim()) throw new Error('missing a "feature" name');
+  if(!Array.isArray(pb.steps) || !pb.steps.length) throw new Error('needs a non-empty "steps" array');
+  for(const s of pb.steps){ if(!s || typeof s!=='object' || Array.isArray(s)) throw new Error('every step must be a non-null object'); }
+  PB=pb; STEP=-1;
   $('#gtitle').textContent=PB.feature||'Guide';
   let h=''; if(PB.summary) h+='<div class="mut" style="margin-bottom:8px">'+esc(PB.summary)+'</div>';
   (PB.steps||[]).forEach((s,i)=>{h+='<div class="gstep" data-i="'+i+'" onclick="gotoStep('+i+')">'
-    +'<div><span class="gn">'+(s.n||i+1)+'</span><span class="gt">'+esc(s.title||'')+'</span>'
+    +'<div><span class="gn">'+esc(''+(s.n||i+1))+'</span><span class="gt">'+esc(s.title||'')+'</span>'
     +(s.check?'<span class="badge-st st-todo" id="bst'+i+'">checking...</span>':'')+'</div>'
     +(s.check?'<div class="chklist" id="chk'+i+'"></div>':'')
     +(s.detail?'<div class="gd">'+esc(s.detail)+'</div>':'')
@@ -257,7 +268,7 @@ function flatten(list,anc,out){ (list||[]).forEach(c=>{
   out.push({text:c.text||'',anc:anc}); flatten(c.children,anc.concat([c.text||'']),out);}); return out;}
 async function evalCheck(chk){
   const n=await getNode(chk.node);
-  const results=(chk.all||[]).map(p=>{
+  const results=(Array.isArray(chk.all)?chk.all:[]).map(p=>{
     let ok=false;
     if('exists' in p) ok=!!n;
     else if(!n) ok=false;
@@ -269,7 +280,7 @@ async function evalCheck(chk){
     return {label:p.label||JSON.stringify(p),ok};
   });
   const pass=results.filter(r=>r.ok).length;
-  const status=pass===results.length?'done':(pass===0?'todo':'partial');
+  const status = results.length===0 ? 'todo' : (pass===results.length ? 'done' : (pass===0 ? 'todo' : 'partial'));
   return {status,pass,total:results.length,results};
 }
 async function runChecks(){
@@ -289,7 +300,7 @@ async function runChecks(){
 function diffTree(list){
   if(!list||!list.length) return '<div class="cmds"><div class="cmd mut">(empty)</div></div>';
   let h='<div class="cmds">';
-  list.forEach(c=>{const cls='cmd c-'+(c.cmd||'').toLowerCase()+(c.added?' added':'')+(c.removed?' removed':'');
+  list.forEach(c=>{const cls='cmd c-'+esc((c.cmd||'').toLowerCase())+(c.added?' added':'')+(c.removed?' removed':'');
     h+='<div class="'+cls+'"><span class="t">'+esc(c.text||c.cmd||'')+'</span>';
     if(c.children&&c.children.length) h+=diffTree(c.children);
     h+='</div>';});
@@ -413,8 +424,12 @@ async function refreshAgentStatus(){
 }
 function openAgent(){ $('#agent').classList.add('on'); refreshAgentStatus(); if(memOpen) refreshMemory(); $('#aq').focus(); }
 function closeAgent(){ $('#agent').classList.remove('on'); }
-// Minimal renderer: escape everything, then turn ``` fenced blocks into <pre>
-// (a ```playbook fence is highlighted; the engine wiring lands in a later unit).
+// Minimal renderer: escape everything, then turn ``` fenced blocks into <pre>.
+// A ```playbook fence is tagged and gets a "Load playbook" button that routes the
+// block into the guide engine (loadGuideFromObject) so it renders + auto-grades.
+// The raw JSON of each emitted block is kept here (not smuggled through an HTML
+// attribute) and referenced by index from the button's inline handler.
+const _pbBlocks=[];
 function renderAnswer(text){
   const parts=(''+text).split('```');
   let html='';
@@ -423,11 +438,30 @@ function renderAnswer(text){
     let body=parts[i]; const nl=body.indexOf('\n');
     const lang=(nl>=0?body.slice(0,nl):'').trim().toLowerCase();
     if(nl>=0) body=body.slice(nl+1);
-    const isPb=lang==='playbook';
-    if(isPb) html+='<div class="pbtag">&#9654; Playbook</div>';
-    html+='<pre class="'+(isPb?'pb':'')+'">'+esc(body.replace(/\n$/,''))+'</pre>';
+    const clean=body.replace(/\n$/,'');
+    if(lang==='playbook'){
+      const pid=_pbBlocks.push(clean)-1;
+      html+='<div class="pbtag">&#9654; Playbook'
+        +'<button type="button" class="pbload" onclick="loadPlaybookFromBlock('+pid+',this)">&#9654; Load playbook</button></div>'
+        +'<pre class="pb">'+esc(clean)+'</pre>'
+        +'<div class="pberr" id="pberr'+pid+'"></div>';
+    } else {
+      html+='<pre>'+esc(clean)+'</pre>';
+    }
   }
   return html;
+}
+// Parse + validate an emitted ```playbook block (by registry index) and route it
+// into the guide engine. Surfaces a clear inline error instead of throwing.
+function loadPlaybookFromBlock(pid, btn){
+  const err=document.getElementById('pberr'+pid);
+  if(err) err.textContent='';
+  let pb;
+  try{ pb=JSON.parse(_pbBlocks[pid]); }
+  catch(e){ if(err) err.textContent='Could not load playbook — invalid JSON: '+e.message; return; }
+  try{ loadGuideFromObject(pb); }
+  catch(e){ if(err) err.textContent='Could not load playbook — '+e.message+'.'; return; }
+  if(btn) btn.textContent='✓ Loaded';
 }
 function addMsg(role, text, runtime){
   const box=document.createElement('div'); box.className='amsg '+role;
@@ -498,7 +532,7 @@ async function saveMemory(){
   }catch(e){ alert('Save note failed: '+e); }
 }
 
-Object.assign(window, { navigate, gotoStep, closeGuide, showNode, showDiff, closeVault, closeAgent });
+Object.assign(window, { navigate, gotoStep, closeGuide, showNode, showDiff, closeVault, closeAgent, loadPlaybookFromBlock });
 
 // ---------- config render (state + tree); reused after a project/snapshot change ----------
 async function renderConfig(){
