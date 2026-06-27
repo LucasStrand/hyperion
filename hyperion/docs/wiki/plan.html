@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Build Plan &amp; Progress · Hyperion Wiki</title>
+<!-- Living progress dashboard for the whole plan. Regenerated as each unit lands.
+     Themeable via :root tokens (M4). Last updated: 2026-06-27. -->
+<style>
+  :root{
+    --bg:#f4f6f8; --pan:#ffffff; --ink:#1f2a36; --mut:#67788a; --line:#dce3ea;
+    --acc:#2b6cb0; --acc-soft:#e8f1fb;
+    --done:#2e9e6a; --done-soft:#eaf7f0; --review:#d98014; --review-soft:#fdf3e6;
+    --partial:#2b6cb0; --partial-soft:#e8f1fb; --todo:#8b98a6; --todo-soft:#eef1f4;
+    --radius:10px;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --mono:Consolas,ui-monospace,"SFMono-Regular",monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.55}
+  a{color:var(--acc)}
+  .wrap{max-width:1000px;margin:0 auto;padding:0 22px 80px}
+  header.top{position:sticky;top:0;z-index:10;background:linear-gradient(180deg,#1b2a3a,#22344a);
+    color:#eaf1f8;margin:0 -22px 22px;padding:22px 22px 18px;box-shadow:0 2px 14px rgba(0,0,0,.18)}
+  .crumb{font-size:13px;color:#9fb6cc;margin-bottom:6px}
+  .crumb a{color:#cfe0f0}
+  header.top h1{margin:0;font-size:26px;letter-spacing:.2px}
+  header.top .sub{color:#a9c0d6;font-size:14px;margin-top:3px}
+  .overall{display:flex;align-items:center;gap:14px;margin-top:14px}
+  .bar{flex:1;height:14px;background:rgba(255,255,255,.14);border-radius:9px;overflow:hidden}
+  .bar > i{display:block;height:100%;background:linear-gradient(90deg,#2e9e6a,#46c08a);width:0;transition:width 1.1s ease}
+  .pct{font-variant-numeric:tabular-nums;font-weight:700;font-size:15px;min-width:44px;text-align:right}
+  .legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:12px;font-size:12px;color:#bcd0e2}
+  .legend span{display:inline-flex;align-items:center;gap:5px}
+  .dot{width:10px;height:10px;border-radius:50%;display:inline-block}
+  .dot.done{background:var(--done)} .dot.review{background:var(--review)}
+  .dot.partial{background:var(--partial)} .dot.todo{background:#9fb6cc}
+  h2{font-size:14px;letter-spacing:.06em;text-transform:uppercase;color:var(--mut);
+    margin:34px 0 12px;border-bottom:1px solid var(--line);padding-bottom:6px}
+  .phases{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+  .phase{border:1px solid var(--line);border-radius:var(--radius);background:var(--pan);padding:12px;position:relative;overflow:hidden}
+  .phase::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px}
+  .phase.done::before{background:var(--done)} .phase.review::before{background:var(--review)}
+  .phase.partial::before{background:var(--partial)} .phase.todo::before{background:var(--todo)}
+  .phase .pid{font-size:11px;color:var(--mut);font-weight:600;letter-spacing:.04em}
+  .phase .pname{font-weight:700;margin:2px 0 6px}
+  .phase .pbar{height:7px;background:var(--todo-soft);border-radius:5px;overflow:hidden;margin-bottom:6px}
+  .phase .pbar > i{display:block;height:100%;background:var(--done)}
+  .pill{display:inline-block;font-size:10px;font-weight:700;border-radius:999px;padding:2px 9px;white-space:nowrap}
+  .pill.done{background:var(--done-soft);color:var(--done)}
+  .pill.review{background:var(--review-soft);color:var(--review)}
+  .pill.partial{background:var(--partial-soft);color:var(--partial)}
+  .pill.todo{background:var(--todo-soft);color:var(--todo)}
+  .mods{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}
+  .mod{border:1px solid var(--line);border-radius:var(--radius);background:var(--pan);padding:14px 16px}
+  .mod h3{margin:0 0 2px;font-size:15px;display:flex;align-items:center;gap:8px;justify-content:space-between}
+  .mod .desc{color:var(--mut);font-size:12.5px;margin:0 0 8px}
+  ul.checks{list-style:none;margin:0;padding:0;font-size:13px}
+  ul.checks li{padding:3px 0 3px 22px;position:relative}
+  ul.checks li::before{position:absolute;left:0;top:2px;font-weight:700}
+  li.done::before{content:"\2713";color:var(--done)}
+  li.done{color:var(--mut);text-decoration:line-through;text-decoration-color:var(--done)}
+  li.review::before{content:"\25D0";color:var(--review)}
+  li.partial::before{content:"\25D1";color:var(--partial)}
+  li.todo::before{content:"\25CB";color:var(--todo)}
+  .flight{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
+  .pr{border:1px solid var(--line);border-radius:var(--radius);background:var(--pan);padding:12px 14px;font-size:13px}
+  .pr .h{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px}
+  .pr .num{font-family:var(--mono);font-weight:700;color:var(--acc)}
+  .pr .t{font-weight:600} .pr .meta{color:var(--mut);font-size:12px;margin-top:3px}
+  table{border-collapse:collapse;width:100%;margin:8px 0;font-size:12.5px}
+  th,td{border:1px solid var(--line);padding:6px 9px;text-align:left;vertical-align:top}
+  th{background:var(--acc-soft);font-weight:600}
+  td.s{white-space:nowrap;width:1%}
+  tr.done td:nth-child(2){color:var(--mut);text-decoration:line-through}
+  .foot{margin-top:40px;border-top:1px solid var(--line);padding-top:14px;color:var(--mut);font-size:13px}
+  details{margin:10px 0} summary{cursor:pointer;font-weight:600;color:var(--acc)}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap" style="padding:0">
+    <div class="crumb"><a href="index.html">&larr; Hyperion Wiki</a> / Build Plan &amp; Progress</div>
+    <h1>Hyperion — Build Plan &amp; Progress</h1>
+    <div class="sub">Enterprise IoT workbench for ComfortClick bOS, operated by an AI agent. The full vision, phased — crossed off as it lands.</div>
+    <div class="overall">
+      <div class="bar"><i id="overallbar"></i></div>
+      <div class="pct" id="overallpct">42%</div>
+    </div>
+    <div class="legend">
+      <span><i class="dot done"></i> Done</span>
+      <span><i class="dot review"></i> In review / in&nbsp;flight</span>
+      <span><i class="dot partial"></i> Partial</span>
+      <span><i class="dot todo"></i> To&nbsp;do</span>
+      <span style="margin-left:auto">Updated 2026-06-27</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <h2>Delivery phases</h2>
+  <div class="phases">
+    <div class="phase done">
+      <div class="pid">PHASE 0</div><div class="pname">Foundation</div>
+      <div class="pbar"><i style="width:100%"></i></div>
+      <span class="pill done">Complete</span>
+      <div class="desc" style="font-size:11.5px;margin-top:6px">Configurator view · .bos parser · SQLite project store</div>
+    </div>
+    <div class="phase done">
+      <div class="pid">PHASE 1</div><div class="pname">Secure shell</div>
+      <div class="pbar"><i style="width:100%"></i></div>
+      <span class="pill done">Complete</span>
+      <div class="desc" style="font-size:11.5px;margin-top:6px">Encrypted vault · Entra SSO · secret guardrail</div>
+    </div>
+    <div class="phase review">
+      <div class="pid">PHASE 2</div><div class="pname">The agent</div>
+      <div class="pbar"><i style="width:55%"></i></div>
+      <span class="pill review">In progress</span>
+      <div class="desc" style="font-size:11.5px;margin-top:6px">Runtime adapter ✓ · memory &amp; playbook in review · roster to&nbsp;do</div>
+    </div>
+    <div class="phase todo">
+      <div class="pid">PHASE 3</div><div class="pname">Context &amp; knowledge</div>
+      <div class="pbar"><i style="width:5%"></i></div>
+      <span class="pill todo">To do</span>
+      <div class="desc" style="font-size:11.5px;margin-top:6px">Milesight/PDF ingestion · RAG · crawler</div>
+    </div>
+    <div class="phase partial">
+      <div class="pid">PHASE 4</div><div class="pname">Docs &amp; standards</div>
+      <div class="pbar"><i style="width:25%"></i></div>
+      <span class="pill partial">Partial</span>
+      <div class="desc" style="font-size:11.5px;margin-top:6px">Themeable wiki ✓ · theme switcher · code standard</div>
+    </div>
+    <div class="phase todo">
+      <div class="pid">PHASE 5</div><div class="pname">Collaboration</div>
+      <div class="pbar"><i style="width:0%"></i></div>
+      <span class="pill todo">To do</span>
+      <div class="desc" style="font-size:11.5px;margin-top:6px">Semantic .bos diff · in-app PRs · timeline</div>
+    </div>
+  </div>
+
+  <h2>In flight right now</h2>
+  <div class="flight">
+    <div class="pr">
+      <div class="h"><span class="num">PR #1</span><span class="pill done">Merged</span></div>
+      <div class="t">Agent runtime adapter + chat dock</div>
+      <div class="meta">M2/M9 · Claude Code → Codex → OpenRouter, instincts, grounded answers</div>
+    </div>
+    <div class="pr">
+      <div class="h"><span class="num">PR #2</span><span class="pill review">CI running</span></div>
+      <div class="t">GitHub Actions CI gate</div>
+      <div class="meta">ubuntu + windows · windows &amp; frontend green, linux compiling</div>
+    </div>
+    <div class="pr">
+      <div class="h"><span class="num">PR #4</span><span class="pill review">Fixing</span></div>
+      <div class="t">Per-project agent memory</div>
+      <div class="meta">M5 · adversarial review BLOCK → 4 fixes being applied</div>
+    </div>
+    <div class="pr">
+      <div class="h"><span class="num">PR #3</span><span class="pill review">Fixed</span></div>
+      <div class="t">Playbook routing → auto-grader</div>
+      <div class="meta">M2 · 6 blockers fixed (XSS, false-green); CSP runtime-check pending</div>
+    </div>
+    <div class="pr">
+      <div class="h"><span class="num">PR #5</span><span class="pill review">Open</span></div>
+      <div class="t">Community-health files</div>
+      <div class="meta">SECURITY · CONTRIBUTING · PR template · .gitattributes</div>
+    </div>
+  </div>
+
+  <h2>Modules — the whole vision</h2>
+  <div class="mods">
+
+    <div class="mod">
+      <h3>M1 — Configurator + ingestion <span class="pill partial">Partial</span></h3>
+      <p class="desc">Faithful read-only Configurator clone; ingest any project context.</p>
+      <ul class="checks">
+        <li class="done">Configurator view (tree, grouped settings, command tree)</li>
+        <li class="done">Upload any <code>.bos</code> → parsed &amp; rendered</li>
+        <li class="done">Per-project store (SQLite snapshots)</li>
+        <li class="todo">Milesight gateway config → LoRa/IoT topology</li>
+        <li class="todo">Add PDF/Word/any file → indexed context</li>
+        <li class="todo">Proactively suggest missing context</li>
+      </ul>
+    </div>
+
+    <div class="mod">
+      <h3>M2 — Agent: "how do I implement X" <span class="pill review">In review</span></h3>
+      <p class="desc">A teacher, not just a doer — grounded in the loaded system.</p>
+      <ul class="checks">
+        <li class="done">Agent chat dock</li>
+        <li class="done">Pluggable runtime (Claude Code → Codex → OpenRouter)</li>
+        <li class="done">State what + pedagogical steps + finished code</li>
+        <li class="done">Emit runnable playbook JSON</li>
+        <li class="review">Route emitted playbook into the auto-grader</li>
+        <li class="partial">RAG over context (grounds on .bos; embeddings to come)</li>
+        <li class="todo">Auto-select MCP/skills by context</li>
+      </ul>
+    </div>
+
+    <div class="mod">
+      <h3>M3 — Code standard <span class="pill todo">To do</span></h3>
+      <p class="desc">Define, teach, and enforce a project code standard retroactively.</p>
+      <ul class="checks">
+        <li class="todo">Define / recommend a standard → wiki canonical page</li>
+        <li class="todo">Standards audit via ECC reviewers</li>
+        <li class="todo">List each flaw + show the fix diff</li>
+      </ul>
+    </div>
+
+    <div class="mod">
+      <h3>M4 — Themeable wiki vault <span class="pill partial">Partial</span></h3>
+      <p class="desc">Auto-documented, pedagogical, exportable, re-themeable.</p>
+      <ul class="checks">
+        <li class="done">Per-feature wiki docs (built as we go)</li>
+        <li class="done">Token-based theme (<code>:root</code>)</li>
+        <li class="done">This live progress dashboard</li>
+        <li class="todo">Theme switcher + editable pages</li>
+        <li class="todo">Network address/login registry (vault-backed)</li>
+        <li class="todo">10 HTML-effectiveness artifacts; static-site export</li>
+      </ul>
+    </div>
+
+    <div class="mod">
+      <h3>M5 — Memory + instincts + roster <span class="pill review">In review</span></h3>
+      <p class="desc">Persistent per-project memory; standing instincts; an agent roster.</p>
+      <ul class="checks">
+        <li class="done">Agent instincts (system prompt)</li>
+        <li class="review">Per-project persistent memory</li>
+        <li class="todo">Multi-agent roster + share protocol</li>
+        <li class="todo">Instincts persistence + versioning</li>
+      </ul>
+    </div>
+
+    <div class="mod">
+      <h3>M6 — Enterprise security <span class="pill partial">Partial</span></h3>
+      <p class="desc">Encrypted vault, Microsoft SSO unlock, security scans.</p>
+      <ul class="checks">
+        <li class="done">AES-256-GCM vault, key in OS keychain</li>
+        <li class="done">Microsoft Entra SSO gates unlock</li>
+        <li class="done">Plaintext-secret guardrail</li>
+        <li class="todo">ECC agents-shield security scans</li>
+        <li class="todo">Enterprise-criteria gate before "done"</li>
+      </ul>
+    </div>
+
+    <div class="mod">
+      <h3>M7 — Knowledge hunger <span class="pill todo">To do</span></h3>
+      <p class="desc">Crawl official docs + forums; propose improvements.</p>
+      <ul class="checks">
+        <li class="todo">Crawler sidecar (docs / knowledgebase)</li>
+        <li class="todo">Track ComfortClick + IoT forums</li>
+        <li class="todo">Prioritise bOS Configurator/Service/Client</li>
+        <li class="todo">Eureka → prompt, make the case, show how</li>
+      </ul>
+    </div>
+
+    <div class="mod">
+      <h3>M8 — Version control (GitHub × ComfortClick) <span class="pill todo">To do</span></h3>
+      <p class="desc">Semantic .bos diffs, human PRs with AI docs, timeline.</p>
+      <ul class="checks">
+        <li class="todo">Snapshot semantic diff engine</li>
+        <li class="todo">In-app PRs (human narrative + AI docs)</li>
+        <li class="todo">Comment/argue threads + merge</li>
+        <li class="todo">Project timeline</li>
+      </ul>
+    </div>
+
+    <div class="mod">
+      <h3>M9 — Runtime/harness &amp; ECC <span class="pill partial">Partial</span></h3>
+      <p class="desc">Adapter detection; ECC as the coding harness.</p>
+      <ul class="checks">
+        <li class="done">Detect Claude Code → Codex → OpenRouter</li>
+        <li class="done">Prefer local runtimes</li>
+        <li class="done">ECC agents drive the dev flow (reviewers, fixers, workflows)</li>
+        <li class="todo">Auto-select MCP/skills per file type</li>
+        <li class="todo">DesignSync for professional client UI</li>
+      </ul>
+    </div>
+
+  </div>
+
+  <h2>Requirement traceability (45)</h2>
+  <details>
+    <summary>Show all 45 requirements with status</summary>
+    <table>
+      <tr><th class="s">#</th><th>Requirement</th><th class="s">Status</th><th>Covered by</th></tr>
+      <tr class="done"><td class="s">1</td><td>Desktop app from the prototype</td><td class="s"><span class="pill done">Done</span></td><td>Tauri shell</td></tr>
+      <tr><td class="s">2</td><td>AI agent operates it — crawl, click, guide</td><td class="s"><span class="pill partial">Partial</span></td><td>M2 ✓ · crawl/click to do</td></tr>
+      <tr class="done"><td class="s">3</td><td>Upload any .bos → improved Configurator clone</td><td class="s"><span class="pill done">Done</span></td><td>M1</td></tr>
+      <tr><td class="s">4</td><td>Upload Milesight gateway config</td><td class="s"><span class="pill todo">To do</span></td><td>M1</td></tr>
+      <tr><td class="s">5</td><td>Add any file as context; suggest more</td><td class="s"><span class="pill todo">To do</span></td><td>M1</td></tr>
+      <tr class="done"><td class="s">6</td><td>Ask how to code/implement in Configurator</td><td class="s"><span class="pill done">Done</span></td><td>M2</td></tr>
+      <tr class="done"><td class="s">7</td><td>Tell what + pedagogical steps + finished code</td><td class="s"><span class="pill done">Done</span></td><td>M2</td></tr>
+      <tr><td class="s">8</td><td>Keep code standard; recommend if none</td><td class="s"><span class="pill todo">To do</span></td><td>M3</td></tr>
+      <tr><td class="s">9</td><td>Enforce standard retroactively, show fixes</td><td class="s"><span class="pill todo">To do</span></td><td>M3</td></tr>
+      <tr class="done"><td class="s">10</td><td>Ask when uncertain; request context</td><td class="s"><span class="pill done">Done</span></td><td>M5 instincts</td></tr>
+      <tr><td class="s">11</td><td>Features well documented</td><td class="s"><span class="pill partial">Ongoing</span></td><td>M4</td></tr>
+      <tr><td class="s">12</td><td>Collective project knowledge wiki</td><td class="s"><span class="pill partial">Partial</span></td><td>M4</td></tr>
+      <tr><td class="s">13</td><td>Docs = website vault, pedagogical</td><td class="s"><span class="pill partial">Partial</span></td><td>M4 (export to do)</td></tr>
+      <tr><td class="s">14</td><td>Keep addresses &amp; logins for the network</td><td class="s"><span class="pill todo">To do</span></td><td>M4 + M6 vault</td></tr>
+      <tr><td class="s">15</td><td>Per-feature simple+complex docs</td><td class="s"><span class="pill partial">Ongoing</span></td><td>M4</td></tr>
+      <tr><td class="s">16</td><td>Firecrawl HTML-effectiveness examples</td><td class="s"><span class="pill todo">To do</span></td><td>M4</td></tr>
+      <tr><td class="s">17</td><td>Wiki template editable + re-themeable</td><td class="s"><span class="pill partial">Partial</span></td><td>M4 (tokens ✓)</td></tr>
+      <tr><td class="s">18</td><td>Artifacts &amp; use cases always considered</td><td class="s"><span class="pill partial">Partial</span></td><td>M4 / M2</td></tr>
+      <tr><td class="s">19</td><td>Persistent project memory at all times</td><td class="s"><span class="pill review">In review</span></td><td>M5</td></tr>
+      <tr class="done"><td class="s">20</td><td>Agent has instincts</td><td class="s"><span class="pill done">Done</span></td><td>M5</td></tr>
+      <tr><td class="s">21</td><td>Shamelessly use ECC skills for IoT/custom code</td><td class="s"><span class="pill partial">Partial</span></td><td>M9</td></tr>
+      <tr><td class="s">22</td><td>Prioritise bOS config/service/client knowledge</td><td class="s"><span class="pill todo">To do</span></td><td>M7</td></tr>
+      <tr><td class="s">23</td><td>Navigate apps, spin up servers, client design</td><td class="s"><span class="pill todo">To do</span></td><td>M7</td></tr>
+      <tr><td class="s">24</td><td>Crawl/download official docs</td><td class="s"><span class="pill todo">To do</span></td><td>M7</td></tr>
+      <tr><td class="s">25</td><td>Track ComfortClick + IoT forums</td><td class="s"><span class="pill todo">To do</span></td><td>M7</td></tr>
+      <tr><td class="s">26</td><td>Eureka → prompt user, make case, show how</td><td class="s"><span class="pill todo">To do</span></td><td>M7</td></tr>
+      <tr><td class="s">27</td><td>Version control for two operators</td><td class="s"><span class="pill partial">Partial</span></td><td>M8 (git/GitHub for dev)</td></tr>
+      <tr><td class="s">28</td><td>New config → display code diffs</td><td class="s"><span class="pill todo">To do</span></td><td>M8</td></tr>
+      <tr><td class="s">29</td><td>PRs = human describes; AI docs attached</td><td class="s"><span class="pill partial">Partial</span></td><td>M8 (PR template ✓)</td></tr>
+      <tr><td class="s">30</td><td>Other person comments/argues in PR</td><td class="s"><span class="pill todo">To do</span></td><td>M8</td></tr>
+      <tr><td class="s">31</td><td>Timeline of history + commit messages</td><td class="s"><span class="pill todo">To do</span></td><td>M8</td></tr>
+      <tr><td class="s">32</td><td>ECC agents-shield security scans</td><td class="s"><span class="pill todo">To do</span></td><td>M6</td></tr>
+      <tr><td class="s">33</td><td>Must be safe (private + enterprise)</td><td class="s"><span class="pill partial">Partial</span></td><td>M6</td></tr>
+      <tr class="done"><td class="s">34</td><td>Encrypted local vault; nag on passwords</td><td class="s"><span class="pill done">Done</span></td><td>M6</td></tr>
+      <tr class="done"><td class="s">35</td><td>Microsoft login decrypts sensitive data</td><td class="s"><span class="pill done">Done</span></td><td>M6 (Entra)</td></tr>
+      <tr><td class="s">36</td><td>Anything making it an enterprise IoT tool</td><td class="s"><span class="pill partial">Partial</span></td><td>M6/M9</td></tr>
+      <tr><td class="s">37</td><td>Custom software meets enterprise criteria</td><td class="s"><span class="pill todo">To do</span></td><td>M6 gate</td></tr>
+      <tr><td class="s">38</td><td>Project knowledge on open; per-agent memory + sharing</td><td class="s"><span class="pill review">In review</span></td><td>M5</td></tr>
+      <tr class="done"><td class="s">39</td><td>Codex/Claude Code/OpenRouter selectable</td><td class="s"><span class="pill done">Done</span></td><td>M9</td></tr>
+      <tr class="done"><td class="s">40</td><td>Prefer local agents</td><td class="s"><span class="pill done">Done</span></td><td>M9</td></tr>
+      <tr><td class="s">41</td><td>"Claude design" for a professional app</td><td class="s"><span class="pill partial">Partial</span></td><td>M9 DesignSync</td></tr>
+      <tr class="done"><td class="s">42</td><td>Reuse ECC repo for the coding harness</td><td class="s"><span class="pill done">Done</span></td><td>M9</td></tr>
+      <tr><td class="s">43</td><td>Auto-use MCP &amp; skills per software</td><td class="s"><span class="pill partial">Partial</span></td><td>M2/M9</td></tr>
+      <tr class="done"><td class="s">44</td><td>ECC primary agent source for coding</td><td class="s"><span class="pill done">Done</span></td><td>M9</td></tr>
+      <tr><td class="s">45</td><td>ECC agents-shield</td><td class="s"><span class="pill todo">To do</span></td><td>M6</td></tr>
+    </table>
+  </details>
+
+  <div class="foot">
+    This dashboard is regenerated as each unit lands — a green strike-through means shipped and verified.
+    Source of truth: the plan in <code>jolly-humming-toucan.md</code> and the live repo. Last updated <strong>2026-06-27</strong>.
+    Hyperion stays strictly read-only toward bOS.
+  </div>
+</div>
+
+<script>
+  // Animate the overall bar to its target on load (purely cosmetic).
+  (function(){
+    var pct = 42;
+    requestAnimationFrame(function(){
+      var el = document.getElementById('overallbar');
+      if (el) el.style.width = pct + '%';
+    });
+  })();
+</script>
+</body></html>
