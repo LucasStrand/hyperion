@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Step-by-step Playbook · Hyperion HTML-effectiveness artifacts</title>
+<!-- Pattern: a step-by-step playbook. An ordered procedure where each step has an
+     intent, an action, and a verification, so a reader can execute and confirm.
+     Themeable via :root tokens; no scripts, no external assets. -->
+<style>
+  :root{
+    --bg:#f4f6f8; --pan:#ffffff; --ink:#1f2a36; --mut:#67788a; --line:#dce3ea;
+    --acc:#2b6cb0; --num:#2b6cb0; --ok:#2e9e6a; --code:#0b3d2e; --codebg:#eef4f1;
+    --radius:10px; --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --mono:Consolas,ui-monospace,"SFMono-Regular",monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.55}
+  .wrap{max-width:760px;margin:0 auto;padding:40px 22px 80px}
+  .kicker{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--acc);font-weight:600}
+  h1{font-size:28px;margin:.18em 0 .1em}
+  .lede{font-size:16px;color:var(--mut);max-width:60ch}
+  ol.steps{list-style:none;counter-reset:step;margin:26px 0 0;padding:0}
+  ol.steps>li{position:relative;counter-increment:step;background:var(--pan);border:1px solid var(--line);
+    border-radius:var(--radius);padding:16px 18px 16px 60px;margin-bottom:12px}
+  ol.steps>li::before{content:counter(step);position:absolute;left:16px;top:16px;width:30px;height:30px;
+    border-radius:50%;background:var(--num);color:#fff;font-weight:700;font-size:14px;
+    display:flex;align-items:center;justify-content:center}
+  .steps h3{margin:0 0 6px;font-size:16px}
+  .steps p{margin:0 0 6px;font-size:14.5px}
+  .verify{font-size:13px;color:var(--ok);font-weight:600}
+  .verify::before{content:"\2713  ";font-weight:700}
+  code{font-family:var(--mono);background:var(--codebg);color:var(--code);padding:1px 5px;border-radius:4px;font-size:12.5px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="kicker">HTML-effectiveness · pattern 03</div>
+  <h1>Step-by-step Playbook</h1>
+  <p class="lede">Use for procedures the reader will execute. Every step states <em>why</em>, gives the
+    concrete action, and ends with a check so the reader knows it worked before moving on.</p>
+
+  <ol class="steps">
+    <li>
+      <h3>Open the project</h3>
+      <p>Load the workspace so the assistant has a configuration to ground against.</p>
+      <p>Run <code>open_project</code> with the project id, or pick it from the launcher.</p>
+      <p class="verify">The header shows the project name and a node count &gt; 0.</p>
+    </li>
+    <li>
+      <h3>Import the latest <code>.bos</code> snapshot</h3>
+      <p>Refresh the live system view before asking anything that depends on current state.</p>
+      <p>Use <code>import_bos</code> and select the exported snapshot file.</p>
+      <p class="verify">A diff summary appears and the snapshot timestamp updates.</p>
+    </li>
+    <li>
+      <h3>Export the wiki</h3>
+      <p>Produce a self-contained handoff folder of the documentation vault.</p>
+      <p>Run <code>wiki_export</code> and choose a destination folder.</p>
+      <p class="verify">The result reports <code>written</code> pages and an <code>index_path</code>.</p>
+    </li>
+  </ol>
+</div>
+</body>
+</html>

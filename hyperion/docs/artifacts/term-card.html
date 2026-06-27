@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Definition / Term Cards · Hyperion HTML-effectiveness artifacts</title>
+<!-- Pattern: definition / term cards. A glossary unit that pairs a term with a tight
+     definition and an optional example, so a reader can scan or deep-read. Themeable
+     via :root tokens; no scripts, no external assets. -->
+<style>
+  :root{
+    --bg:#f4f6f8; --pan:#ffffff; --ink:#1f2a36; --mut:#67788a; --line:#dce3ea;
+    --acc:#2b6cb0; --acc-soft:#e8f1fb; --code:#0b3d2e; --codebg:#eef4f1;
+    --radius:10px; --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --mono:Consolas,ui-monospace,"SFMono-Regular",monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.55}
+  .wrap{max-width:760px;margin:0 auto;padding:40px 22px 80px}
+  .kicker{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--acc);font-weight:600}
+  h1{font-size:28px;margin:.18em 0 .1em}
+  .lede{font-size:16px;color:var(--mut);max-width:60ch}
+  .cards{display:grid;gap:14px;margin-top:24px}
+  dl.card{margin:0;background:var(--pan);border:1px solid var(--line);border-left:3px solid var(--acc);
+    border-radius:var(--radius);padding:16px 18px}
+  dt{font-weight:600;font-size:16px;display:flex;align-items:center;gap:8px}
+  dt .tag{font-family:var(--mono);font-size:11px;color:var(--acc);background:var(--acc-soft);
+    border-radius:999px;padding:2px 8px;font-weight:600}
+  dd{margin:8px 0 0;font-size:14.5px;color:var(--ink)}
+  dd .eg{display:block;margin-top:8px;font-size:13px;color:var(--mut)}
+  code{font-family:var(--mono);background:var(--codebg);color:var(--code);padding:1px 5px;border-radius:4px;font-size:12.5px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="kicker">HTML-effectiveness · pattern 02</div>
+  <h1>Definition / Term Cards</h1>
+  <p class="lede">Use for glossaries and concept references. The term leads, the definition is one or two
+    sentences, and a worked example grounds it. A coloured rail makes each card a scannable unit.</p>
+
+  <div class="cards">
+    <dl class="card">
+      <dt>Node <span class="tag">bOS</span></dt>
+      <dd>An addressable element of the bOS object tree — a device, property, or logic block. Every node has
+        a <code>path</code> and a <code>type</code>.
+        <span class="eg">e.g. <code>Devices\Modbus\Boiler\Setpoint</code></span></dd>
+    </dl>
+    <dl class="card">
+      <dt>Grounding <span class="tag">agent</span></dt>
+      <dd>The fenced, untrusted system context spliced into a prompt so the assistant answers about the
+        <em>actual</em> loaded configuration rather than guessing.
+        <span class="eg">e.g. the focused node plus its references and children.</span></dd>
+    </dl>
+    <dl class="card">
+      <dt>Instinct <span class="tag">roster</span></dt>
+      <dd>A versioned, per-project block of role guidance that shapes one agent's behaviour. Append-only, so
+        every change is auditable and revertible.
+        <span class="eg">e.g. &ldquo;always cite the node path you read a value from.&rdquo;</span></dd>
+    </dl>
+  </div>
+</div>
+</body>
+</html>

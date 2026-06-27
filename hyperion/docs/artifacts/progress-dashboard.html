@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Progress Dashboard · Hyperion HTML-effectiveness artifacts</title>
+<!-- Pattern: a progress dashboard. A glanceable status board where each row pairs
+     a labelled bar with a percentage, so a reader grasps overall state in seconds.
+     Self-contained and themeable via :root tokens. No scripts, no external assets. -->
+<style>
+  :root{
+    --bg:#f4f6f8; --pan:#ffffff; --ink:#1f2a36; --mut:#67788a; --line:#dce3ea;
+    --acc:#2b6cb0; --track:#eef2f6; --done:#2e9e6a; --soon:#d98014; --todo:#9aa7b4;
+    --radius:10px; --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --mono:Consolas,ui-monospace,"SFMono-Regular",monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.55}
+  .wrap{max-width:760px;margin:0 auto;padding:40px 22px 80px}
+  .kicker{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--acc);font-weight:600}
+  h1{font-size:28px;margin:.18em 0 .1em}
+  .lede{font-size:16px;color:var(--mut);max-width:60ch}
+  .board{background:var(--pan);border:1px solid var(--line);border-radius:var(--radius);
+    padding:8px 20px 18px;margin-top:24px}
+  .row{padding:14px 0;border-bottom:1px solid var(--line)}
+  .row:last-child{border-bottom:0}
+  .head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:7px}
+  .name{font-weight:600;font-size:14.5px}
+  .pct{font-family:var(--mono);font-size:13px;color:var(--mut)}
+  .bar{height:9px;border-radius:999px;background:var(--track);overflow:hidden}
+  .fill{height:100%;border-radius:999px}
+  .fill.done{background:var(--done)} .fill.soon{background:var(--soon)} .fill.todo{background:var(--todo)}
+  .legend{margin-top:18px;display:flex;gap:18px;font-size:12.5px;color:var(--mut);flex-wrap:wrap}
+  .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:middle}
+  .dot.done{background:var(--done)} .dot.soon{background:var(--soon)} .dot.todo{background:var(--todo)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="kicker">HTML-effectiveness · pattern 01</div>
+  <h1>Progress Dashboard</h1>
+  <p class="lede">Use when a reader needs the state of several parallel efforts at a glance. Each row
+    is one work-stream; the bar encodes completion and the colour encodes phase.</p>
+
+  <div class="board" role="table" aria-label="Milestone progress">
+    <div class="row">
+      <div class="head"><span class="name">Ingest &amp; parsing</span><span class="pct">100%</span></div>
+      <div class="bar"><div class="fill done" style="width:100%"></div></div>
+    </div>
+    <div class="row">
+      <div class="head"><span class="name">Agent runtime</span><span class="pct">82%</span></div>
+      <div class="bar"><div class="fill done" style="width:82%"></div></div>
+    </div>
+    <div class="row">
+      <div class="head"><span class="name">Static-site export</span><span class="pct">55%</span></div>
+      <div class="bar"><div class="fill soon" style="width:55%"></div></div>
+    </div>
+    <div class="row">
+      <div class="head"><span class="name">Roster customisation</span><span class="pct">20%</span></div>
+      <div class="bar"><div class="fill todo" style="width:20%"></div></div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <span><span class="dot done"></span>On track / done</span>
+    <span><span class="dot soon"></span>In progress</span>
+    <span><span class="dot todo"></span>Not started</span>
+  </div>
+</div>
+</body>
+</html>
