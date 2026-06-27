@@ -533,6 +533,40 @@ fn memory_delete(id: i64, projects: State<'_, Mutex<Projects>>) -> Result<bool, 
     projects::memory_delete(&db, id)
 }
 
+// ----------------------------- wiki commands (M4) -----------------------------
+//
+// Operator-editable wiki pages (projects.rs `wiki_page`). Per-project, so all
+// three require an open project (same "open a project first" contract as memory).
+// `wiki_save` runs the shared plaintext-secret guard. Strictly local toward bOS.
+
+/// List the active project's wiki pages (slug, title, updated_at, bytes — no HTML).
+#[tauri::command]
+fn wiki_list(projects: State<'_, Mutex<Projects>>) -> Result<Vec<Value>, String> {
+    let db = active_project_db(&projects)?;
+    projects::wiki_list(&db)
+}
+
+/// Fetch one wiki page by slug (slug, title, html, updated_at), or null if absent.
+#[tauri::command]
+fn wiki_get(slug: String, projects: State<'_, Mutex<Projects>>) -> Result<Value, String> {
+    let db = active_project_db(&projects)?;
+    projects::wiki_get(&db, &slug)
+}
+
+/// Insert or replace a wiki page (upsert by slug) in the active project. Validated
+/// and secret-scanned in `projects::wiki_save`. Returns its row id.
+#[tauri::command]
+fn wiki_save(
+    slug: String,
+    title: String,
+    html: String,
+    projects: State<'_, Mutex<Projects>>,
+) -> Result<Value, String> {
+    let db = active_project_db(&projects)?;
+    let id = projects::wiki_save(&db, &slug, &title, &html)?;
+    Ok(json!({ "id": id }))
+}
+
 // ----------------------------- roster commands (M5) -----------------------------
 //
 // The agent roster + versioned instincts (roster.rs). Listing the roster works
@@ -1206,6 +1240,9 @@ pub fn run() {
             memory_list,
             memory_set,
             memory_delete,
+            wiki_list,
+            wiki_get,
+            wiki_save,
             agent_roster,
             agent_instincts_get,
             agent_instincts_set,

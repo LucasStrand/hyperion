@@ -5,6 +5,9 @@
 // auto-grading / inline-highlight logic is unchanged.
 import { invoke } from "@tauri-apps/api/core";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
+// Theme system + wiki-editor component styles (M4). Loading this here is what makes
+// the dark preset and the switcher take effect; the light tokens stay in index.html.
+import "./styles.css";
 
 // ---------- Tauri command shim (replaces the Flask /api/* routes) ----------
 const api = {
@@ -50,6 +53,11 @@ const api = {
   contextList:    () => invoke("context_list"),
   contextAddFile: (path) => invoke("context_add_file", { path }),
   contextDelete:  (id) => invoke("context_delete", { id }),
+
+  // editable wiki pages (src-tauri/src/projects.rs)
+  wikiList: () => invoke("wiki_list"),
+  wikiGet:  (slug) => invoke("wiki_get", { slug }),         // null when no such page
+  wikiSave: (slug, title, html) => invoke("wiki_save", { slug, title, html }),
 };
 
 const $ = (s) => document.querySelector(s), $$ = (s) => [...document.querySelectorAll(s)];
@@ -691,7 +699,79 @@ async function addContextFile(){
   finally{ btn.disabled=false; btn.textContent='Add file…'; }
 }
 
-Object.assign(window, { navigate, gotoStep, closeGuide, showNode, showDiff, closeVault, closeAgent, loadPlaybookFromBlock });
+// ---------- theme switcher (M4) ----------
+// Swap the :root design-token set between the built-in Light default (index.html)
+// and the Dark preset (styles.css), persist the choice to localStorage, and apply
+// it on load. The whole product themes off these tokens — the configurator shell
+// and the bundled wiki pages — so one toggle re-skins everything consistently.
+const THEME_KEY = 'hyperion-theme';
+function applyTheme(t){
+  const v = (t==='dark') ? 'dark' : 'light';
+  document.documentElement.setAttribute('data-theme', v);
+  const sel=$('#themesel'); if(sel) sel.value=v;
+  try{ localStorage.setItem(THEME_KEY, v); }catch(e){}
+}
+function initTheme(){
+  let t='light';
+  try{ t=localStorage.getItem(THEME_KEY)||'light'; }catch(e){}
+  applyTheme(t);
+  const sel=$('#themesel'); if(sel) sel.onchange=()=>applyTheme(sel.value);
+}
+
+// ---------- editable wiki pages (M4) ----------
+// Operator-authored knowledge pages persisted per project (projects.rs wiki_page).
+// The modal lists pages, loads one into the editor, and saves (upsert by slug). The
+// backend slugifies the slug, validates, and runs the plaintext-secret guard, so a
+// saved page can't smuggle a credential into the project DB. Escape rendered text.
+async function refreshWikiList(selectSlug){
+  const sel=$('#wikilist'); if(!sel) return;
+  let pages=[];
+  try{ pages=await api.wikiList(); }catch(e){ pages=[]; }
+  sel.innerHTML='<option value="">- pick a page -</option>'
+    + pages.map(p=>'<option value="'+esc(p.slug)+'">'+esc(p.title)+' ('+esc(p.slug)+')</option>').join('');
+  if(selectSlug) sel.value=selectSlug;
+  $('#wikimeta').textContent = pages.length
+    ? (pages.length+' page'+(pages.length===1?'':'s'))
+    : 'No pages yet — write one below.';
+}
+async function loadWikiPage(slug){
+  const st=$('#wikistatus'); st.textContent='';
+  if(!slug){ return; }
+  let page=null;
+  try{ page=await api.wikiGet(slug); }catch(e){ st.textContent='Load failed: '+e; return; }
+  if(!page){ st.textContent='That page no longer exists.'; await refreshWikiList(); return; }
+  $('#wikislug').value=page.slug||'';
+  $('#wikititle').value=page.title||'';
+  $('#wikihtml').value=page.html||'';
+  st.textContent = page.updated_at ? ('Loaded · updated '+page.updated_at) : 'Loaded';
+}
+function newWikiPage(){
+  $('#wikilist').value='';
+  $('#wikislug').value=''; $('#wikititle').value=''; $('#wikihtml').value='';
+  $('#wikistatus').textContent='New page — give it a slug, a title and some HTML.';
+  $('#wikislug').focus();
+}
+async function saveWikiPage(){
+  const slug=$('#wikislug').value.trim();
+  const title=$('#wikititle').value.trim();
+  const html=$('#wikihtml').value;
+  if(!slug){ alert('Give the page a slug (e.g. network-registry).'); return; }
+  if(!title){ alert('Give the page a title.'); return; }
+  if(!html.trim()){ alert('The page needs some HTML content.'); return; }
+  const btn=$('#wikisave'); btn.disabled=true; btn.textContent='Saving…';
+  try{
+    await api.wikiSave(slug, title, html);
+    await refreshWikiList(slug);
+    // The backend slugifies; reflect the canonical slug back into the field.
+    const sel=$('#wikilist'); if(sel && sel.value) $('#wikislug').value=sel.value;
+    $('#wikistatus').textContent='Saved.';
+  }catch(e){ alert('Save page failed: '+e); $('#wikistatus').textContent=''; }
+  finally{ btn.disabled=false; btn.textContent='Save page'; }
+}
+function openWiki(){ $('#wiki').classList.add('on'); refreshWikiList(); }
+function closeWiki(){ $('#wiki').classList.remove('on'); }
+
+Object.assign(window, { navigate, gotoStep, closeGuide, showNode, showDiff, closeVault, closeAgent, closeWiki, loadPlaybookFromBlock });
 
 // ---------- config render (state + tree); reused after a project/snapshot change ----------
 async function renderConfig(){
@@ -751,6 +831,7 @@ async function importBos(){
 
 // ---------- boot ----------
 async function init(){
+  initTheme();
   await renderConfig();
 
   $('#search').oninput=e=>{const q=e.target.value.toLowerCase();
@@ -786,6 +867,13 @@ async function init(){
   $('#vsave').onclick=saveSecret;
   $('#vscanbtn').onclick=scanGuard;
   $('#vault').addEventListener('click',e=>{ if(e.target.id==='vault') closeVault(); });
+
+  // wiki editor
+  $('#wikibtn').onclick=openWiki;
+  $('#wikilist').onchange=e=>loadWikiPage(e.target.value);
+  $('#wikinew').onclick=newWikiPage;
+  $('#wikisave').onclick=saveWikiPage;
+  $('#wiki').addEventListener('click',e=>{ if(e.target.id==='wiki') closeWiki(); });
 
   // agent dock
   $('#agentbtn').onclick=openAgent;
