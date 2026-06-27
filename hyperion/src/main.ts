@@ -19,6 +19,10 @@ const api = {
   openProject:(id) => invoke("open_project", { id }),
   curProject:() => invoke("current_project"),
   importBos: (path, label) => invoke("import_bos", { path, label }),
+  // per-project agent memory (src-tauri/src/projects.rs)
+  memoryList:   () => invoke("memory_list"),
+  memorySet:    (mtype, slug, body) => invoke("memory_set", { mtype, slug, body }),
+  memoryDelete: (id) => invoke("memory_delete", { id }),
   // encrypted vault (src-tauri/src/vault.rs)
   vaultStatus: () => invoke("vault_status"),
   vaultUnlock: () => invoke("vault_unlock"),
@@ -38,7 +42,7 @@ const api = {
 };
 
 const $ = (s) => document.querySelector(s), $$ = (s) => [...document.querySelectorAll(s)];
-function esc(s){return (''+s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+function esc(s){return (''+s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 
 // ---------- icons by node type ----------
 function icon(t){t=t||'';
@@ -407,7 +411,7 @@ async function refreshAgentStatus(){
     else { b.textContent='no runtime'; b.classList.add('off'); }
   }catch(e){ b.textContent='status error'; b.classList.add('off'); }
 }
-function openAgent(){ $('#agent').classList.add('on'); refreshAgentStatus(); $('#aq').focus(); }
+function openAgent(){ $('#agent').classList.add('on'); refreshAgentStatus(); if(memOpen) refreshMemory(); $('#aq').focus(); }
 function closeAgent(){ $('#agent').classList.remove('on'); }
 // Minimal renderer: escape everything, then turn ``` fenced blocks into <pre>
 // (a ```playbook fence is highlighted; the engine wiring lands in a later unit).
@@ -452,6 +456,48 @@ async function sendAsk(){
   }
 }
 
+// ---------- per-project agent memory (Phase 2, M5) ----------
+// Operator-authored notes the agent loads into its grounding on every ask, so it
+// remembers facts across sessions. Escape everything rendered; the type selector
+// mirrors the backend's project|feature|reference|security categories.
+let memOpen=false;
+function toggleMem(){
+  memOpen=!memOpen;
+  $('#agentmem').classList.toggle('open',memOpen);
+  $('#amembody').style.display=memOpen?'block':'none';
+  if(memOpen) refreshMemory();
+}
+async function refreshMemory(){
+  const list=$('#amemlist'); let notes=[];
+  try{ notes=await api.memoryList(); }catch(e){ notes=[]; }
+  $('#amemcount').textContent = notes.length ? (notes.length+' note'+(notes.length===1?'':'s')) : '';
+  if(!notes.length){
+    list.innerHTML='<div class="mut" style="font-size:12px;padding:4px 2px">No saved notes yet. Add one below — the agent loads them on every ask. Open a project first.</div>';
+    return;
+  }
+  list.innerHTML=notes.map(n=>'<div class="amemitem"><div class="mtop">'
+    +'<span class="amemtype '+esc(n.mtype)+'">'+esc(n.mtype)+'</span>'
+    +'<span class="mslug">'+esc(n.slug)+'</span>'
+    +'<span class="mdel" data-id="'+esc(n.id)+'">delete</span></div>'
+    +'<div class="mbody">'+esc(n.body)+'</div></div>').join('');
+  $$('#amemlist .mdel').forEach(b=>b.onclick=async()=>{
+    if(!confirm('Delete this memory note?')) return;
+    try{ await api.memoryDelete(Number(b.dataset.id)); await refreshMemory(); }
+    catch(e){ alert('Delete note failed: '+e); }});
+}
+async function saveMemory(){
+  const mtype=$('#amemtype').value;
+  const slug=$('#amemslug').value.trim();
+  const body=$('#amembodytext').value.trim();
+  if(!slug){ alert('Give the note a short name (e.g. main-pump).'); return; }
+  if(!body){ alert('Write something for the agent to remember.'); return; }
+  try{
+    await api.memorySet(mtype, slug, body);
+    $('#amemslug').value=''; $('#amembodytext').value='';
+    await refreshMemory();
+  }catch(e){ alert('Save note failed: '+e); }
+}
+
 Object.assign(window, { navigate, gotoStep, closeGuide, showNode, showDiff, closeVault, closeAgent });
 
 // ---------- config render (state + tree); reused after a project/snapshot change ----------
@@ -484,8 +530,8 @@ function applyProjectView(view){
 }
 
 async function openProjectById(id){
-  if(!id){ activeProject=null; setImportEnabled(); return; }
-  try{ applyProjectView(await api.openProject(id)); await renderConfig(); }
+  if(!id){ activeProject=null; setImportEnabled(); if(memOpen) refreshMemory(); return; }
+  try{ applyProjectView(await api.openProject(id)); await renderConfig(); if(memOpen) refreshMemory(); }
   catch(e){ alert('Open project failed: '+e); }
 }
 
@@ -552,6 +598,9 @@ async function init(){
   $('#agentbtn').onclick=openAgent;
   $('#asend').onclick=sendAsk;
   $('#aq').addEventListener('keydown',e=>{ if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){ e.preventDefault(); sendAsk(); }});
+  // agent memory (collapsible)
+  $('#amemtoggle').onclick=toggleMem;
+  $('#amemsave').onclick=saveMemory;
   refreshAgentStatus();
 }
 init();

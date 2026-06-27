@@ -176,6 +176,34 @@ border-left:1px solid var(--line);box-shadow:-8px 0 30px rgba(0,0,0,.16);display
 .afocuslbl{font-size:11px;color:#555;display:flex;align-items:center;gap:4px;cursor:pointer}
 .asend{margin-left:auto;font-size:12px;padding:5px 16px;border:1px solid var(--acc);background:var(--acc);color:#fff;border-radius:6px;cursor:pointer}
 .asend:disabled{opacity:.5;cursor:default}
+/* per-project agent memory (Phase 2, M5) */
+.amem{border-bottom:1px solid var(--line);background:#fff;flex:0 0 auto}
+.amemh{padding:7px 12px;font-size:11px;font-weight:700;color:#555;cursor:pointer;text-transform:uppercase;
+letter-spacing:.04em;user-select:none;display:flex;align-items:center;gap:7px}
+.amemh:hover{background:#f3f5f8}
+.amemh .amemchev{display:inline-block;transition:transform .15s;color:var(--mut)}
+.amem.open .amemh .amemchev{transform:rotate(90deg)}
+.amemcount{margin-left:auto;font-weight:600;color:var(--mut);text-transform:none;letter-spacing:0}
+.amembody{padding:0 12px 10px;max-height:42vh;overflow:auto}
+.amemnote{font-size:11px;color:var(--mut);margin:0 0 8px}
+.amemlist{display:flex;flex-direction:column;gap:5px;margin-bottom:9px}
+.amemitem{border:1px solid var(--line);border-radius:6px;padding:5px 8px;font-size:12px;background:#fbfcfd}
+.amemitem .mtop{display:flex;align-items:center;gap:6px;margin-bottom:3px}
+.amemtype{font-size:9px;font-weight:700;padding:1px 7px;border-radius:8px;background:#cfe2fb;color:#10243b;text-transform:uppercase;letter-spacing:.03em}
+.amemtype.security{background:#ffe3df;color:#b3261e}
+.amemtype.reference{background:#eaf7f0;color:#1a7f37}
+.amemtype.feature{background:#fff5e0;color:#9a6700}
+.amemitem .mslug{font-weight:600;color:#10243b;overflow-wrap:anywhere}
+.amemitem .mdel{margin-left:auto;color:#b3261e;cursor:pointer;font-size:11px;flex:0 0 auto}
+.amemitem .mdel:hover{text-decoration:underline}
+.amemitem .mbody{color:#333;white-space:pre-wrap;overflow-wrap:anywhere}
+.amemadd{display:flex;flex-direction:column;gap:6px}
+.amemrow{display:flex;gap:6px}
+.amemadd select,.amemadd input,.amemadd textarea{padding:4px 7px;border:1px solid var(--line);border-radius:5px;font:inherit;background:#fff}
+.amemrow #amemslug{flex:1;min-width:0}
+.amemadd textarea{resize:vertical;min-height:42px}
+.amemadd #amemsave{align-self:flex-end;font-size:12px;padding:4px 14px;border:1px solid var(--acc);background:var(--acc);color:#fff;border-radius:6px;cursor:pointer}
+.amemadd #amemsave:hover{background:#1a5da8}
 </style>
 <script type="module" src="/src/main.ts"></script>
 </head>
@@ -255,6 +283,27 @@ border-left:1px solid var(--line);box-shadow:-8px 0 30px rgba(0,0,0,.16);display
   <div class="ah">&#128172; bOS Co-pilot
     <span id="aruntime" class="abadge off">no runtime</span>
     <button type="button" class="x" onclick="closeAgent()" aria-label="Close agent">&#10005;</button></div>
+  <div id="agentmem" class="amem">
+    <div class="amemh" id="amemtoggle"><span class="amemchev">&#9656;</span> Project memory
+      <span id="amemcount" class="amemcount"></span></div>
+    <div class="amembody" id="amembody" style="display:none">
+      <div class="amemnote">Notes the co-pilot loads into context on every ask &mdash; persisted per project. Never store secrets here; use the &#128274; Vault.</div>
+      <div id="amemlist" class="amemlist"></div>
+      <div class="amemadd">
+        <div class="amemrow">
+          <select id="amemtype" title="Note category">
+            <option value="project">project</option>
+            <option value="feature">feature</option>
+            <option value="reference">reference</option>
+            <option value="security">security</option>
+          </select>
+          <input id="amemslug" placeholder="name (e.g. main-pump)">
+        </div>
+        <textarea id="amembodytext" rows="2" placeholder="What should the co-pilot remember?"></textarea>
+        <button type="button" id="amemsave">Save note</button>
+      </div>
+    </div>
+  </div>
   <div id="amsgs" class="amsgs"></div>
   <div class="afoot">
     <textarea id="aq" placeholder="Ask how to implement something in ComfortClick&hellip;  (Ctrl+Enter to send)"></textarea>

@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Project Memory · Hyperion Wiki</title>
+<!-- Feature doc: Phase 2 per-project agent memory (M5). Themeable via :root tokens (M4). -->
+<style>
+  :root{
+    --bg:#f4f6f8; --pan:#ffffff; --ink:#1f2a36; --mut:#67788a; --line:#dce3ea;
+    --acc:#2b6cb0; --acc-soft:#e8f1fb; --ok:#2e9e6a; --warn:#b3261e; --soon:#d98014;
+    --code:#0b3d2e; --codebg:#eef4f1; --radius:10px;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --mono:Consolas,ui-monospace,"SFMono-Regular",monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.6}
+  .wrap{max-width:880px;margin:0 auto;padding:36px 22px 80px}
+  a{color:var(--acc)}
+  .crumb{font-size:13px;color:var(--mut);margin-bottom:8px}
+  .kicker{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--acc);font-weight:600}
+  h1{font-size:30px;margin:.16em 0 .12em}
+  .lede{font-size:17px;color:var(--mut);max-width:64ch}
+  h2{font-size:15px;letter-spacing:.04em;text-transform:uppercase;color:var(--mut);
+     margin:34px 0 10px;border-bottom:1px solid var(--line);padding-bottom:6px}
+  h3{margin:18px 0 4px;font-size:16px}
+  p,li{font-size:14.5px}
+  code{font-family:var(--mono);background:var(--codebg);color:var(--code);padding:1px 5px;border-radius:4px;font-size:13px}
+  pre{background:#11202b;color:#d6e2ec;padding:12px 14px;border-radius:var(--radius);overflow:auto;font-family:var(--mono);font-size:12.5px;line-height:1.5}
+  .pill{display:inline-block;font-size:11px;font-weight:600;border-radius:999px;padding:2px 9px}
+  .pill.done{background:#eaf7f0;color:var(--ok)} .pill.soon{background:#fdf3e6;color:var(--soon)}
+  table{border-collapse:collapse;width:100%;margin:10px 0;font-size:13.5px}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:var(--acc-soft);font-weight:600}
+  td code{white-space:nowrap}
+  .note{background:var(--acc-soft);border-left:3px solid var(--acc);border-radius:0 6px 6px 0;padding:10px 14px;margin:14px 0}
+  .warn{background:#fdecea;border-left:3px solid var(--warn);border-radius:0 6px 6px 0;padding:10px 14px;margin:14px 0}
+  .flow{font-family:var(--mono);font-size:12.5px;background:var(--pan);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;white-space:pre;overflow:auto}
+  .foot{margin-top:44px;border-top:1px solid var(--line);padding-top:14px;color:var(--mut);font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="crumb"><a href="index.html">&larr; Hyperion Wiki</a> / Project Memory</div>
+  <div class="kicker">Phase 2 · milestone M5 · the agent remembers</div>
+  <h1>Project Memory <span class="pill done">Built</span></h1>
+  <p class="lede">The co-pilot's long-term memory. Short, operator-authored notes that live
+    with the project and are loaded into the agent's context on <em>every</em> ask &mdash; so it
+    remembers the things that don't change between sessions.</p>
+
+  <h2>Why it exists</h2>
+  <p>The agent already grounds each answer in the <em>loaded</em> <code>.bos</code> (see
+    <a href="agent.html">The Agent</a>). But a lot of what an integrator needs the co-pilot to know
+    isn't in the export: <em>"the main pump is on Modbus slave 3"</em>, <em>"this site's KNX area is 1.1"</em>,
+    <em>"the customer wants the lobby scene to fade over 4&nbsp;seconds"</em>. Without memory those facts must be
+    re-typed into every conversation. Project Memory makes them durable: write a note once, and it is
+    silently prepended to the agent's system prompt from then on.</p>
+
+  <h2>What a note is</h2>
+  <p>Each note is a small typed record in the project's SQLite store (the forward-compatible
+    <code>memory</code> table reserved back in Phase&nbsp;0). One row per <code>slug</code> &mdash; saving the
+    same slug again <strong>updates in place</strong> rather than piling up duplicates.</p>
+  <div class="flow">memory row  =  id · mtype · slug · body · updated_at
+              │      │      │      └ the note text the agent reads
+              │      │      └ short name / key (slugified); upsert key
+              │      └ category (one of four, below)
+              └ stable row id (used for delete)</div>
+  <table>
+    <tr><th>Type</th><th>For</th></tr>
+    <tr><td><code>project</code></td><td>Facts about <em>this</em> install &mdash; addressing, gateways, who the customer is.</td></tr>
+    <tr><td><code>feature</code></td><td>How a built feature works, so the agent stays consistent with it.</td></tr>
+    <tr><td><code>reference</code></td><td>External facts &mdash; a datasheet value, a Milesight register, a KNX DPT.</td></tr>
+    <tr><td><code>security</code></td><td>Security-relevant reminders &mdash; <em>never the secret itself</em> (that lives in the Vault).</td></tr>
+  </table>
+  <p>The type is validated in the backend: anything outside
+    <code>project | feature | reference | security</code> is rejected. The <code>slug</code> is normalized
+    with the same <code>slugify</code> the project store uses, and an empty body is refused.</p>
+
+  <h2>How it reaches the agent</h2>
+  <p>On every <code>agent_ask</code>, the active project's notes are read and folded into the system
+    prompt as their own clearly-labeled section &mdash; <em>ahead</em> of the untrusted <code>&lt;bos-data&gt;</code>
+    fence, because memory is written by the operator and is therefore <strong>trusted</strong> context:</p>
+  <div class="flow">INSTINCTS (system prompt)
+      │
+      ├─ # Project memory (operator-authored, trusted)
+      │     - [project] Main pump is Modbus slave 3.
+      │     - [reference] Lobby KNX area = 1.1
+      │
+      └─ # Loaded system context (untrusted data)
+            &lt;bos-data&gt; … the loaded .bos grounding … &lt;/bos-data&gt;
+      ▼
+  active runtime  →  text answer</div>
+  <p>The block is <strong>token-bounded</strong> (capped at ~4&nbsp;KB, truncated with a marker if exceeded) so a
+    long note can never crowd out the question or the grounding. When no project is open, or a project has no
+    notes, the section is simply omitted &mdash; an ask still works.</p>
+  <div class="warn"><strong>Secrets never go here.</strong> Memory is loaded verbatim into the prompt, so a
+    password or token written into a note would become model context. Credentials belong only in the
+    encrypted <a href="vault.html">Vault</a>; the grounding builder never reads the vault, and the UI says so.</div>
+
+  <h2>The UI</h2>
+  <p>Memory lives where you talk to the agent &mdash; a collapsible <strong>Project memory</strong> panel at the
+    top of the <span style="white-space:nowrap">💬 co-pilot</span> dock. Expand it to see the saved notes
+    (type chip · name · body), delete any with a click, or add a new one with the type selector, a short name,
+    and the note text. Every rendered value is HTML-escaped, the same discipline the rest of the dock follows.</p>
+
+  <h2>Commands (Tauri ⇄ webview)</h2>
+  <p>All three operate on the <strong>active project's</strong> database and error clearly
+    (<code>no project is open — create or open one first</code>) when none is, mirroring <code>import_bos</code>.</p>
+  <table>
+    <tr><th>Command</th><th>Args</th><th>Returns</th></tr>
+    <tr><td><code>memory_list</code></td><td>—</td><td><code>[{id,mtype,slug,body,updated_at}]</code>, ordered by type then slug.</td></tr>
+    <tr><td><code>memory_set</code></td><td><code>mtype, slug, body</code></td><td><code>{id}</code> &mdash; upsert by slug; stamps <code>updated_at</code>.</td></tr>
+    <tr><td><code>memory_delete</code></td><td><code>id</code></td><td><code>bool</code> &mdash; whether the note existed.</td></tr>
+  </table>
+
+  <h2>Where it lives</h2>
+  <table>
+    <tr><th>Path</th><th>Role</th></tr>
+    <tr><td><code>src-tauri/src/projects.rs</code></td><td><code>memory_list</code> / <code>memory_set</code> /
+      <code>memory_delete</code> / <code>memory_load_for_prompt</code> + <code>valid_mtype</code>, on the
+      project <code>memory</code> table. Unit-tested round-trip.</td></tr>
+    <tr><td><code>src-tauri/src/lib.rs</code></td><td>The three Tauri commands, and the
+      <code>build_memory_block</code> seam that injects the trusted section into <code>agent_ask</code>.</td></tr>
+    <tr><td><code>index.html</code> / <code>src/main.ts</code></td><td>The collapsible
+      <span style="white-space:nowrap">Project memory</span> panel: list / add / delete, type chips, escaped rendering.</td></tr>
+    <tr><td><code>&lt;project&gt;/project.db</code> → <code>memory</code></td><td>Per-project, git-ignored, strictly local.</td></tr>
+  </table>
+
+  <h2>Boundaries</h2>
+  <ul>
+    <li><strong>Strictly local</strong> &mdash; notes live in the project's git-ignored SQLite store; nothing is synced.</li>
+    <li><strong>Read-only toward bOS</strong> &mdash; memory is context for the agent, never written back to the system.</li>
+    <li><strong>No secrets</strong> &mdash; the vault is the only home for credentials; memory is plain context.</li>
+  </ul>
+
+  <div class="foot">Documented as built · part of the main wiki collection · strictly read-only toward bOS.</div>
+</div>
+</body>
+</html>

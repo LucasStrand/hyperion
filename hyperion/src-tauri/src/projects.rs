@@ -14,6 +14,8 @@ use std::path::{Path, PathBuf};
 use rusqlite::Connection;
 use serde_json::{json, Value};
 
+use crate::vault;
+
 /// Bump when the schema changes in a non-additive way.
 pub const SCHEMA_VERSION: &str = "1";
 
@@ -91,6 +93,11 @@ fn init_db(conn: &Connection, name: &str) -> rusqlite::Result<()> {
              id INTEGER PRIMARY KEY AUTOINCREMENT,
              mtype TEXT NOT NULL, slug TEXT NOT NULL, body TEXT NOT NULL, updated_at TEXT NOT NULL
          );
+         -- One row per slug. Added here (IF NOT EXISTS) so it also lands on DBs that
+         -- created the forward-compat `memory` table before this index existed; the
+         -- table was never populated before M5, so there can be no duplicate slugs
+         -- to violate it. Enables the atomic ON CONFLICT(slug) upsert in memory_set.
+         CREATE UNIQUE INDEX IF NOT EXISTS memory_slug_uq ON memory(slug);
          CREATE TABLE IF NOT EXISTS wiki_page (
              id INTEGER PRIMARY KEY AUTOINCREMENT,
              slug TEXT UNIQUE NOT NULL, title TEXT NOT NULL, html TEXT NOT NULL, updated_at TEXT NOT NULL
@@ -310,5 +317,244 @@ pub fn active_snapshot(db: &Path) -> Result<Option<(String, Value)>, String> {
             Ok(Some((fname, nodes)))
         }
         None => Ok(None),
+    }
+}
+
+// ----------------------------- per-project memory (M5) -----------------------------
+//
+// Persistent, operator-authored notes loaded into the agent's grounding so it
+// remembers facts across sessions (e.g. "the main pump is Modbus slave 3"). They
+// live in the forward-compatible `memory` table (id, mtype, slug, body,
+// updated_at). A note is keyed by `slug` and *upserted* (one row per slug). Notes
+// are typed so the UI and the prompt can group them; an unknown type is rejected.
+//
+// Strictly local and read-only toward bOS. Secrets never belong here — they live
+// only in the encrypted vault — and memory is never written into a vault prompt.
+
+/// The four allowed memory categories. `project` = facts about this install,
+/// `feature` = how a built feature works, `reference` = external/datasheet facts,
+/// `security` = security-relevant reminders (never the secret itself).
+pub const MEMORY_TYPES: [&str; 4] = ["project", "feature", "reference", "security"];
+
+/// Is `mtype` one of the allowed categories?
+pub fn valid_mtype(mtype: &str) -> bool {
+    MEMORY_TYPES.contains(&mtype)
+}
+
+/// All memory notes for a project as JSON (id, mtype, slug, body, updated_at),
+/// ordered deterministically by type then slug for a stable UI.
+pub fn memory_list(db: &Path) -> Result<Vec<Value>, String> {
+    let conn = Connection::open(db).map_err(|e| format!("open db: {e}"))?;
+    let mut stmt = conn
+        .prepare("SELECT id, mtype, slug, body, updated_at FROM memory ORDER BY mtype, slug, id")
+        .map_err(|e| format!("{e}"))?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(json!({
+                "id": r.get::<_, i64>(0)?,
+                "mtype": r.get::<_, String>(1)?,
+                "slug": r.get::<_, String>(2)?,
+                "body": r.get::<_, String>(3)?,
+                "updated_at": r.get::<_, String>(4)?,
+            }))
+        })
+        .map_err(|e| format!("{e}"))?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row.map_err(|e| format!("{e}"))?);
+    }
+    Ok(out)
+}
+
+/// Upper bound on a stored note body (bytes). Generous for a rich operator note,
+/// but capped so a single note can't dominate the agent's prompt budget or bloat
+/// the DB. Enforced at write time in `memory_set`.
+const MAX_BODY_LEN: usize = 8192;
+
+/// Insert or replace a memory note, keyed by its (slugified) `slug`. Validates
+/// `mtype`, requires a non-empty body within `MAX_BODY_LEN`, rejects bodies that
+/// look like a plaintext secret, and stamps `updated_at = datetime('now')`.
+/// Returns the row id. Atomic: a single `INSERT … ON CONFLICT(slug) DO UPDATE …
+/// RETURNING id` against the `memory_slug_uq` unique index, so two concurrent
+/// writers can't race between a separate update probe and an insert.
+pub fn memory_set(db: &Path, mtype: &str, slug: &str, body: &str) -> Result<i64, String> {
+    if !valid_mtype(mtype) {
+        return Err(format!(
+            "invalid memory type '{mtype}' (expected one of project|feature|reference|security)"
+        ));
+    }
+    let slug = slugify(slug);
+    let body = body.trim();
+    if body.is_empty() {
+        return Err("memory note body cannot be empty".into());
+    }
+    if body.len() > MAX_BODY_LEN {
+        return Err("memory note body is too long (max 8 KB)".into());
+    }
+    // Plaintext-secret guardrail (mirrors the `scan_secret` command for snapshots):
+    // a note is spliced verbatim into the agent prompt, so a real credential pasted
+    // here would leak into context. Reject only the high-confidence shapes (PEM key,
+    // AWS key, bearer token); the looser `credential_assignment` heuristic
+    // false-positives on ordinary notes like "token bucket: ..." and would block
+    // legitimate writes. Secrets belong in the encrypted vault, never in memory.
+    const HIGH_CONFIDENCE: [&str; 3] = ["private_key", "aws_access_key", "bearer_token"];
+    let has_secret = vault::scan_for_secrets(body).iter().any(|f| {
+        f.get("kind")
+            .and_then(|k| k.as_str())
+            .is_some_and(|k| HIGH_CONFIDENCE.contains(&k))
+    });
+    if has_secret {
+        return Err(
+            "this note looks like it contains a plaintext secret — store it in the encrypted vault, not in project memory".into(),
+        );
+    }
+    let conn = Connection::open(db).map_err(|e| format!("open db: {e}"))?;
+    conn.query_row(
+        "INSERT INTO memory(mtype, slug, body, updated_at)
+         VALUES (?1, ?2, ?3, datetime('now'))
+         ON CONFLICT(slug) DO UPDATE SET
+             mtype = excluded.mtype,
+             body = excluded.body,
+             updated_at = excluded.updated_at
+         RETURNING id",
+        rusqlite::params![mtype, slug, body],
+        |r| r.get::<_, i64>(0),
+    )
+    .map_err(|e| format!("upsert memory: {e}"))
+}
+
+/// Delete a memory note by id. Returns whether a row was removed.
+pub fn memory_delete(db: &Path, id: i64) -> Result<bool, String> {
+    let conn = Connection::open(db).map_err(|e| format!("open db: {e}"))?;
+    let n = conn
+        .execute("DELETE FROM memory WHERE id = ?1", rusqlite::params![id])
+        .map_err(|e| format!("delete memory: {e}"))?;
+    Ok(n > 0)
+}
+
+/// Compact `(mtype, body)` pairs for the agent grounding, ordered like
+/// `memory_list`. The caller (lib.rs) labels and token-bounds them; this layer
+/// stays free of prompt formatting.
+pub fn memory_load_for_prompt(db: &Path) -> Result<Vec<(String, String)>, String> {
+    let conn = Connection::open(db).map_err(|e| format!("open db: {e}"))?;
+    let mut stmt = conn
+        .prepare("SELECT mtype, body FROM memory ORDER BY mtype, slug, id")
+        .map_err(|e| format!("{e}"))?;
+    let rows = stmt
+        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+        .map_err(|e| format!("{e}"))?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row.map_err(|e| format!("{e}"))?);
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A fresh, isolated projects root for one test (cleaned up by the caller).
+    fn temp_root(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!(
+            "hyperion_projects_test_{}_{}",
+            std::process::id(),
+            tag
+        ));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// Create a project under a fresh root and return `(root, project.db path)`.
+    fn fresh_db(tag: &str) -> (PathBuf, PathBuf) {
+        let root = temp_root(tag);
+        let summary = create(&root, "Test Project").unwrap();
+        let id = summary.get("id").unwrap().as_str().unwrap().to_string();
+        let db = root.join(&id).join("project.db");
+        (root, db)
+    }
+
+    #[test]
+    fn memory_roundtrip_set_list_delete() {
+        let (root, db) = fresh_db("mem_rt");
+
+        // Set a note; slug is normalized via slugify ("Main Pump" -> "main-pump").
+        let id = memory_set(&db, "project", "Main Pump", "Main pump is Modbus slave 3.").unwrap();
+        assert!(id > 0);
+        let list = memory_list(&db).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0]["mtype"], "project");
+        assert_eq!(list[0]["slug"], "main-pump");
+        assert_eq!(list[0]["body"], "Main pump is Modbus slave 3.");
+
+        // Upsert by slug: same slug updates the existing row (type + body), no dup.
+        let id2 = memory_set(&db, "feature", "main-pump", "Updated note.").unwrap();
+        assert_eq!(id, id2);
+        let list = memory_list(&db).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0]["mtype"], "feature");
+        assert_eq!(list[0]["body"], "Updated note.");
+
+        // Prompt view returns the (mtype, body) pair.
+        let loaded = memory_load_for_prompt(&db).unwrap();
+        assert_eq!(
+            loaded,
+            vec![("feature".to_string(), "Updated note.".to_string())]
+        );
+
+        // Validation: bad type and empty body are rejected.
+        assert!(memory_set(&db, "bogus", "x", "y").is_err());
+        assert!(memory_set(&db, "project", "z", "   ").is_err());
+
+        // Delete is idempotent on the second call.
+        assert!(memory_delete(&db, id).unwrap());
+        assert!(!memory_delete(&db, id).unwrap());
+        assert!(memory_list(&db).unwrap().is_empty());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn memory_set_rejects_too_long_body() {
+        let (root, db) = fresh_db("mem_toolong");
+
+        // One byte over the cap is rejected with a clear message.
+        let huge = "x".repeat(MAX_BODY_LEN + 1);
+        let err = memory_set(&db, "project", "huge", &huge).unwrap_err();
+        assert!(err.contains("too long"), "got: {err}");
+        assert!(memory_list(&db).unwrap().is_empty());
+
+        // A body exactly at the cap is accepted.
+        let at_cap = "y".repeat(MAX_BODY_LEN);
+        assert!(memory_set(&db, "project", "atcap", &at_cap).is_ok());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn memory_set_rejects_plaintext_secret() {
+        let (root, db) = fresh_db("mem_secret");
+
+        // A pasted PEM private key is a high-confidence secret and must be refused.
+        let body = "-----BEGIN RSA PRIVATE KEY-----\nMIIabc123\n-----END RSA PRIVATE KEY-----";
+        let err = memory_set(&db, "security", "leaked-key", body).unwrap_err();
+        assert!(
+            err.contains("secret") || err.contains("vault"),
+            "got: {err}"
+        );
+        assert!(memory_list(&db).unwrap().is_empty());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn valid_mtype_accepts_only_known_categories() {
+        for t in MEMORY_TYPES {
+            assert!(valid_mtype(t));
+        }
+        assert!(!valid_mtype("notes"));
+        assert!(!valid_mtype(""));
+        assert!(!valid_mtype("Project")); // case-sensitive
     }
 }
