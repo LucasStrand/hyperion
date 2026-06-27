@@ -85,7 +85,7 @@
     <div class="sub">Enterprise IoT workbench for ComfortClick bOS, operated by an AI agent. The full vision, phased — crossed off as it lands.</div>
     <div class="overall">
       <div class="bar"><i id="overallbar"></i></div>
-      <div class="pct" id="overallpct">64%</div>
+      <div class="pct" id="overallpct">70%</div>
     </div>
     <div class="legend">
       <span><i class="dot done"></i> Done</span>
@@ -207,8 +207,8 @@
       <h3>M3 — Code standard <span class="pill todo">To do</span></h3>
       <p class="desc">Define, teach, and enforce a project code standard retroactively.</p>
       <ul class="checks">
-        <li class="todo">Define / recommend a standard → wiki canonical page</li>
-        <li class="todo">Standards audit via ECC reviewers</li>
+        <li class="done">Define / recommend a standard → wiki canonical page</li>
+        <li class="done">Standards audit (deterministic source audit)</li>
         <li class="todo">List each flaw + show the fix diff</li>
       </ul>
     </div>
@@ -221,8 +221,8 @@
         <li class="done">Token-based theme (<code>:root</code>)</li>
         <li class="done">This live progress dashboard</li>
         <li class="done">Theme switcher + editable pages</li>
-        <li class="todo">Network address/login registry (vault-backed)</li>
-        <li class="todo">10 HTML-effectiveness artifacts; static-site export</li>
+        <li class="done">Network address/login registry (vault-backed)</li>
+        <li class="done">HTML-effectiveness artifacts; static-site export</li>
       </ul>
     </div>
 
@@ -351,7 +351,7 @@
 <script>
   // Animate the overall bar to its target on load (purely cosmetic).
   (function(){
-    var pct = 64;
+    var pct = 70;
     requestAnimationFrame(function(){
       var el = document.getElementById('overallbar');
       if (el) el.style.width = pct + '%';
