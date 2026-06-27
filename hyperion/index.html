@@ -228,6 +228,18 @@ letter-spacing:.04em;user-select:none;display:flex;align-items:center;gap:7px}
 .aroshrow{border:1px solid var(--line);border-radius:6px;padding:5px 8px;font-size:11.5px;background:#fbfcfd}
 .aroshrow .arosrev{float:right;font:inherit;font-size:10px;padding:1px 8px;border:1px solid var(--line);background:#fff;border-radius:8px;cursor:pointer;color:#36506b}
 .aroshrow .mbody{color:#333;white-space:pre-wrap;overflow-wrap:anywhere;margin-top:3px}
+/* context files panel */
+.actxlist{display:flex;flex-direction:column;gap:5px;margin-bottom:9px}
+.actxitem{border:1px solid var(--line);border-radius:6px;padding:5px 8px;font-size:12px;background:#fbfcfd}
+.actxitem .mtop{display:flex;align-items:center;gap:6px}
+.actxkind{font-size:9px;font-weight:700;padding:1px 7px;border-radius:8px;background:#eaf7f0;color:#1a7f37;text-transform:uppercase;letter-spacing:.03em;flex:0 0 auto}
+.actxitem .actxname{font-weight:600;color:#10243b;overflow-wrap:anywhere}
+.actxitem .mdel{margin-left:auto;color:#b3261e;cursor:pointer;font-size:11px;flex:0 0 auto}
+.actxitem .mdel:hover{text-decoration:underline}
+.actxitem .actxmeta{font-size:11px;margin-top:2px}
+.actxadd{font:inherit;font-size:12px;padding:5px 14px;border:1px solid var(--acc);background:var(--acc);color:#fff;border-radius:6px;cursor:pointer}
+.actxadd:hover{background:#1a5da8}
+.actxadd:disabled{opacity:.5;cursor:default}
 </style>
 <script type="module" src="/src/main.ts"></script>
 </head>
@@ -344,6 +356,15 @@ letter-spacing:.04em;user-select:none;display:flex;align-items:center;gap:7px}
         </span>
       </div>
       <div id="aroshist" class="aroshist"></div>
+    </div>
+  </div>
+  <div id="agentctx" class="amem">
+    <div class="amemh" id="actxtoggle"><span class="amemchev">&#9656;</span> Context files
+      <span id="actxcount" class="amemcount"></span></div>
+    <div class="amembody" id="actxbody" style="display:none">
+      <div class="amemnote">Reference material the co-pilot retrieves from on every ask &mdash; a datasheet, a Milesight CSV export, wiring notes. Text/Markdown/CSV/JSON for now (PDF &amp; Word land later). Per project.</div>
+      <div id="actxlist" class="actxlist"></div>
+      <button type="button" id="actxadd" class="actxadd">Add file&hellip;</button>
     </div>
   </div>
   <div id="amsgs" class="amsgs"></div>

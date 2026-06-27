@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 use rusqlite::Connection;
 use serde_json::{json, Value};
 
+use crate::ingest;
 use crate::vault;
 
 /// Bump when the schema changes in a non-additive way.
@@ -89,6 +90,23 @@ fn init_db(conn: &Connection, name: &str) -> rusqlite::Result<()> {
              id INTEGER PRIMARY KEY AUTOINCREMENT,
              name TEXT NOT NULL, kind TEXT, added_at TEXT NOT NULL, content BLOB
          );
+         -- One row per file name. context_file is first populated in M1, so no real
+         -- DB can hold a duplicate name to violate this; it makes the name-dedup in
+         -- context_add a DB-enforced invariant (mirrors memory_slug_uq) rather than a
+         -- purely application-level one.
+         CREATE UNIQUE INDEX IF NOT EXISTS context_file_name_uq ON context_file(name);
+         -- Extracted, chunked text of an ingested context file (M1). One row per
+         -- chunk, ordered by `ord`; deleted with its file. The FK declares the
+         -- ownership (ON DELETE CASCADE) so the relationship is explicit in the
+         -- schema; context_add/context_delete still cascade manually in a transaction
+         -- (foreign_keys enforcement is a per-connection PRAGMA, left off for now).
+         -- Created here (IF NOT EXISTS) so older project DBs self-heal on open.
+         CREATE TABLE IF NOT EXISTS context_chunk (
+             id INTEGER PRIMARY KEY AUTOINCREMENT,
+             file_id INTEGER NOT NULL REFERENCES context_file(id) ON DELETE CASCADE,
+             ord INTEGER NOT NULL, text TEXT NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS context_chunk_file ON context_chunk(file_id);
          CREATE TABLE IF NOT EXISTS memory (
              id INTEGER PRIMARY KEY AUTOINCREMENT,
              mtype TEXT NOT NULL, slug TEXT NOT NULL, body TEXT NOT NULL, updated_at TEXT NOT NULL
@@ -458,6 +476,182 @@ pub fn memory_load_for_prompt(db: &Path) -> Result<Vec<(String, String)>, String
     Ok(out)
 }
 
+// ----------------------------- context files (M1) -----------------------------
+//
+// Ingested reference material (a datasheet, a Milesight CSV export) lives in
+// `context_file` (the original extracted text) + `context_chunk` (its retrievable
+// pieces). On every ask the agent retrieves the few chunks most relevant to the
+// question and the caller fences them as UNTRUSTED data — file content can carry
+// injected instructions, so it is treated exactly like the `.bos` grounding.
+// Strictly local; never written back to bOS.
+
+/// Ingest a file's bytes into the active project: extract text, chunk it, and store
+/// the file + chunks. Re-adding the same `name` replaces the previous copy (and its
+/// chunks). Returns `{id, name, kind, chunks}`. Validation (kind/size/empty) lives
+/// in `ingest::extract_text`. All writes happen in one transaction.
+pub fn context_add(db: &Path, name: &str, bytes: &[u8]) -> Result<Value, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("file has no name".into());
+    }
+    let kind = ingest::detect_kind(name);
+    let text = ingest::extract_text(name, bytes)?;
+    // Plaintext-secret guardrail (mirrors memory_set and roster instinct writes):
+    // ingested text is stored in the *unencrypted* project DB and later spliced into
+    // the agent prompt — and on the cloud runtime, sent to OpenRouter. A config file
+    // (.yaml/.json/.ini/.conf) carrying an embedded credential would otherwise leak
+    // silently. The shared `body_has_plaintext_secret` guard rejects the high-
+    // confidence shapes (PEM key, AWS key, bearer token, bare vendor `sk-or-…` keys).
+    // Secrets belong in the encrypted vault, never in a context file.
+    if vault::body_has_plaintext_secret(&text) {
+        return Err(
+            "this file appears to contain a plaintext secret — store credentials in the encrypted vault, not in a context file".into(),
+        );
+    }
+    let chunks = ingest::chunk(&text);
+    if chunks.is_empty() {
+        return Err("no readable text to index".into());
+    }
+    let mut conn = Connection::open(db).map_err(|e| format!("open db: {e}"))?;
+    let tx = conn.transaction().map_err(|e| format!("begin tx: {e}"))?;
+    // Replace any prior file with this name (and its chunks) so re-uploads refresh.
+    {
+        let stale: Vec<i64> = {
+            let mut stmt = tx
+                .prepare("SELECT id FROM context_file WHERE name = ?1")
+                .map_err(|e| format!("{e}"))?;
+            let ids = stmt
+                .query_map(rusqlite::params![name], |r| r.get::<_, i64>(0))
+                .map_err(|e| format!("{e}"))?;
+            let mut v = Vec::new();
+            for id in ids {
+                v.push(id.map_err(|e| format!("{e}"))?);
+            }
+            v
+        };
+        for id in stale {
+            tx.execute(
+                "DELETE FROM context_chunk WHERE file_id = ?1",
+                rusqlite::params![id],
+            )
+            .map_err(|e| format!("{e}"))?;
+            tx.execute(
+                "DELETE FROM context_file WHERE id = ?1",
+                rusqlite::params![id],
+            )
+            .map_err(|e| format!("{e}"))?;
+        }
+    }
+    tx.execute(
+        "INSERT INTO context_file(name, kind, added_at, content)
+         VALUES (?1, ?2, datetime('now'), ?3)",
+        rusqlite::params![name, kind, text.as_bytes()],
+    )
+    .map_err(|e| format!("insert context_file: {e}"))?;
+    let file_id = tx.last_insert_rowid();
+    {
+        let mut stmt = tx
+            .prepare("INSERT INTO context_chunk(file_id, ord, text) VALUES (?1, ?2, ?3)")
+            .map_err(|e| format!("{e}"))?;
+        for (i, c) in chunks.iter().enumerate() {
+            stmt.execute(rusqlite::params![file_id, i as i64, c])
+                .map_err(|e| format!("insert chunk: {e}"))?;
+        }
+    }
+    tx.commit().map_err(|e| format!("commit: {e}"))?;
+    Ok(json!({
+        "id": file_id,
+        "name": name,
+        "kind": kind,
+        "chunks": chunks.len(),
+    }))
+}
+
+/// All ingested context files (id, name, kind, added_at, byte size, chunk count),
+/// newest first. Never returns the file content itself.
+pub fn context_list(db: &Path) -> Result<Vec<Value>, String> {
+    let conn = Connection::open(db).map_err(|e| format!("open db: {e}"))?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT cf.id, cf.name, cf.kind, cf.added_at, LENGTH(cf.content),
+                    (SELECT COUNT(*) FROM context_chunk WHERE file_id = cf.id)
+             FROM context_file cf ORDER BY cf.added_at DESC, cf.id DESC",
+        )
+        .map_err(|e| format!("{e}"))?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(json!({
+                "id": r.get::<_, i64>(0)?,
+                "name": r.get::<_, String>(1)?,
+                "kind": r.get::<_, Option<String>>(2)?,
+                "added_at": r.get::<_, String>(3)?,
+                "bytes": r.get::<_, i64>(4)?,
+                "chunks": r.get::<_, i64>(5)?,
+            }))
+        })
+        .map_err(|e| format!("{e}"))?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row.map_err(|e| format!("{e}"))?);
+    }
+    Ok(out)
+}
+
+/// Delete an ingested context file (and its chunks) by id. Returns whether it existed.
+pub fn context_delete(db: &Path, id: i64) -> Result<bool, String> {
+    let mut conn = Connection::open(db).map_err(|e| format!("open db: {e}"))?;
+    let tx = conn.transaction().map_err(|e| format!("begin tx: {e}"))?;
+    tx.execute(
+        "DELETE FROM context_chunk WHERE file_id = ?1",
+        rusqlite::params![id],
+    )
+    .map_err(|e| format!("{e}"))?;
+    let n = tx
+        .execute(
+            "DELETE FROM context_file WHERE id = ?1",
+            rusqlite::params![id],
+        )
+        .map_err(|e| format!("{e}"))?;
+    tx.commit().map_err(|e| format!("commit: {e}"))?;
+    Ok(n > 0)
+}
+
+/// Retrieve up to `k` chunks most relevant to `query`, as `(file_name, chunk_text)`,
+/// ranked by keyword overlap (highest first; only chunks that match at all). A
+/// dependency-free stand-in until the embedding ranker lands. Reads every chunk —
+/// fine at project scale (a handful of files) and avoids an FTS dependency for now.
+pub fn context_retrieve(db: &Path, query: &str, k: usize) -> Result<Vec<(String, String)>, String> {
+    let terms = ingest::keywords(query);
+    if terms.is_empty() {
+        return Ok(Vec::new());
+    }
+    let conn = Connection::open(db).map_err(|e| format!("open db: {e}"))?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT cf.name, cc.text FROM context_chunk cc
+             JOIN context_file cf ON cf.id = cc.file_id",
+        )
+        .map_err(|e| format!("{e}"))?;
+    let rows = stmt
+        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+        .map_err(|e| format!("{e}"))?;
+    let mut scored: Vec<(usize, String, String)> = Vec::new();
+    for row in rows {
+        let (name, text) = row.map_err(|e| format!("{e}"))?;
+        let s = ingest::score(&terms, &text);
+        if s > 0 {
+            scored.push((s, name, text));
+        }
+    }
+    // Highest score first; stable sort keeps DB order for equal scores.
+    scored.sort_by_key(|t| std::cmp::Reverse(t.0));
+    Ok(scored
+        .into_iter()
+        .take(k)
+        .map(|(_, name, text)| (name, text))
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -564,5 +758,63 @@ mod tests {
         assert!(!valid_mtype("notes"));
         assert!(!valid_mtype(""));
         assert!(!valid_mtype("Project")); // case-sensitive
+    }
+
+    #[test]
+    fn context_add_list_retrieve_delete_roundtrip() {
+        let (root, db) = fresh_db("ctx_rt");
+
+        // Ingest a datasheet-like CSV; it should produce at least one chunk.
+        let body = b"device,bus,slave\nBelimo LR24A actuator,Modbus,7\nlobby scene,KNX,1.1\n";
+        let added = context_add(&db, "belimo.csv", body).unwrap();
+        assert_eq!(added["name"], "belimo.csv");
+        assert_eq!(added["kind"], "csv");
+        assert!(added["chunks"].as_i64().unwrap() >= 1);
+
+        // It shows up in the list with a byte size and chunk count, no content.
+        let list = context_list(&db).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0]["name"], "belimo.csv");
+        assert!(list[0].get("content").is_none());
+        assert!(list[0]["chunks"].as_i64().unwrap() >= 1);
+
+        // Retrieval finds the chunk mentioning the queried terms.
+        let hits =
+            context_retrieve(&db, "what modbus slave is the belimo actuator on?", 4).unwrap();
+        assert!(!hits.is_empty());
+        assert_eq!(hits[0].0, "belimo.csv");
+        assert!(hits[0].1.contains("Belimo"));
+        // A query with no shared keywords retrieves nothing.
+        assert!(context_retrieve(&db, "zzz qqq", 4).unwrap().is_empty());
+
+        // Re-adding the same name replaces (no duplicate row).
+        context_add(&db, "belimo.csv", b"device,bus\nupdated,now\n").unwrap();
+        assert_eq!(context_list(&db).unwrap().len(), 1);
+
+        // Unsupported kind is rejected.
+        assert!(context_add(&db, "scan.pdf", b"%PDF-1.7").is_err());
+
+        // Delete removes the file and its chunks; second delete is a no-op.
+        let id = context_list(&db).unwrap()[0]["id"].as_i64().unwrap();
+        assert!(context_delete(&db, id).unwrap());
+        assert!(!context_delete(&db, id).unwrap());
+        assert!(context_list(&db).unwrap().is_empty());
+        assert!(context_retrieve(&db, "belimo", 4).unwrap().is_empty());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn context_add_rejects_plaintext_secret() {
+        let (root, db) = fresh_db("ctx_secret");
+        // A config file carrying a bare OpenRouter key must be refused *before* it can
+        // land in the unencrypted project DB or be spliced into the model prompt.
+        let secret = b"{\n  \"openrouter_key\": \"sk-or-v1-abc123def456ghi789jkl012mno345\"\n}\n";
+        let err = context_add(&db, "creds.json", secret).unwrap_err();
+        assert!(err.contains("plaintext secret"), "got: {err}");
+        // Nothing was stored.
+        assert!(context_list(&db).unwrap().is_empty());
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

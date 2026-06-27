@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Context Files · Hyperion Wiki</title>
+<!-- Feature doc: Phase 3 context-file ingestion + chunking + retrieval (M1). Themeable via :root tokens (M4). -->
+<style>
+  :root{
+    --bg:#f4f6f8; --pan:#ffffff; --ink:#1f2a36; --mut:#67788a; --line:#dce3ea;
+    --acc:#2b6cb0; --acc-soft:#e8f1fb; --ok:#2e9e6a; --warn:#b3261e; --soon:#d98014;
+    --code:#0b3d2e; --codebg:#eef4f1; --radius:10px;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --mono:Consolas,ui-monospace,"SFMono-Regular",monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.6}
+  .wrap{max-width:880px;margin:0 auto;padding:36px 22px 80px}
+  a{color:var(--acc)}
+  .crumb{font-size:13px;color:var(--mut);margin-bottom:8px}
+  .kicker{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--acc);font-weight:600}
+  h1{font-size:30px;margin:.16em 0 .12em}
+  .lede{font-size:17px;color:var(--mut);max-width:64ch}
+  h2{font-size:15px;letter-spacing:.04em;text-transform:uppercase;color:var(--mut);
+     margin:34px 0 10px;border-bottom:1px solid var(--line);padding-bottom:6px}
+  p,li{font-size:14.5px}
+  code{font-family:var(--mono);background:var(--codebg);color:var(--code);padding:1px 5px;border-radius:4px;font-size:13px}
+  .pill{display:inline-block;font-size:11px;font-weight:600;border-radius:999px;padding:2px 9px}
+  .pill.done{background:#eaf7f0;color:var(--ok)} .pill.soon{background:#fdf3e6;color:var(--soon)}
+  table{border-collapse:collapse;width:100%;margin:10px 0;font-size:13.5px}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:var(--acc-soft);font-weight:600}
+  td code{white-space:nowrap}
+  .note{background:var(--acc-soft);border-left:3px solid var(--acc);border-radius:0 6px 6px 0;padding:10px 14px;margin:14px 0}
+  .warn{background:#fdecea;border-left:3px solid var(--warn);border-radius:0 6px 6px 0;padding:10px 14px;margin:14px 0}
+  .flow{font-family:var(--mono);font-size:12.5px;background:var(--pan);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;white-space:pre;overflow:auto}
+  .foot{margin-top:44px;border-top:1px solid var(--line);padding-top:14px;color:var(--mut);font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="crumb"><a href="index.html">&larr; Hyperion Wiki</a> / Context Files</div>
+  <div class="kicker">Phase 3 · milestone M1 · the co-pilot reads your references</div>
+  <h1>Context Files <span class="pill done">Built (unit 1)</span></h1>
+  <p class="lede">Drop a datasheet, a Milesight gateway export, or wiring notes into a project and the
+    co-pilot answers from them. Each file is extracted, chunked, and retrieved into the agent's context
+    on every ask &mdash; the first slice of Hyperion's retrieval-augmented knowledge.</p>
+
+  <h2>Why it exists</h2>
+  <p>The agent already grounds on the loaded <code>.bos</code> and on <a href="memory.html">project memory</a>,
+    but the answer often lives in a document the export doesn't contain: <em>"what Modbus slave is the
+    Belimo actuator on?"</em>, <em>"what's the holding register for setpoint on this Milesight gateway?"</em>
+    Context files make that material first-class &mdash; add it once, and the relevant pieces are pulled
+    into the prompt whenever they're useful.</p>
+
+  <h2>The pipeline</h2>
+  <div class="flow">add file ──► extract text ──► chunk (~1500 chars, overlap) ──► store
+                                                          │
+   ask a question ──► keyword-rank chunks ──► top matches ─┘──► fenced as UNTRUSTED in the prompt</div>
+  <ul>
+    <li><b>Extract</b> &mdash; text/Markdown/CSV/TSV/log/JSON/YAML/XML/INI today; PDF &amp; Word land in a
+      later unit. Binary/office files are rejected with a clear message. Max 4&nbsp;MB per file.</li>
+    <li><b>Chunk</b> &mdash; split into ~1500-character pieces on line boundaries, with a small overlap so a
+      fact straddling a boundary stays findable. Unicode-correct; always terminates.</li>
+    <li><b>Retrieve</b> &mdash; a dependency-free keyword overlap ranks chunks against the question and the
+      top few are injected. (The embedding/vector ranker is the next unit &mdash; the vector-store choice is
+      still open.)</li>
+  </ul>
+
+  <h2>Security: retrieved text is untrusted</h2>
+  <div class="warn">A datasheet or CSV can carry injected instructions (<em>"ignore your rules and…"</em>).
+    Retrieved chunks are therefore entity-encoded and wrapped in a <code>&lt;context-files&gt;</code> fence
+    inside the prompt's untrusted region &mdash; exactly like the <code>.bos</code> grounding &mdash; and the
+    agent's standing instincts name that fence explicitly and refuse to follow anything inside it. A chunk
+    containing <code>&lt;/context-files&gt;</code> can't break out, because the delimiters are encoded.</div>
+  <p>Ingested files are stored only in the local project database and are never written back to bOS. As with
+    memory, secrets don't belong here &mdash; they live in the encrypted <a href="vault.html">Vault</a>.</p>
+
+  <h2>Commands &amp; storage</h2>
+  <table>
+    <tr><th>Command</th><th>Does</th></tr>
+    <tr><td><code>context_add_file</code></td><td>Read a file (picked via the OS dialog), extract + chunk + store. Returns <code>{id, name, kind, chunks}</code>. Re-adding a name replaces it.</td></tr>
+    <tr><td><code>context_list</code></td><td>Ingested files (name, kind, size, chunk count) &mdash; never the content.</td></tr>
+    <tr><td><code>context_delete</code></td><td>Remove a file and its chunks.</td></tr>
+  </table>
+  <p>Storage is two SQLite tables in the project DB: <code>context_file</code> (the extracted text) and
+    <code>context_chunk</code> (one row per retrievable chunk, deleted with its file).</p>
+
+  <div class="foot">Hyperion · Phase 3 (M1) unit 1 of N · read-only toward bOS; secrets stay in the vault.
+    See also <a href="agent.html">The Agent</a> · <a href="memory.html">Project Memory</a> ·
+    <a href="roster.html">Agent Roster</a> · <a href="plan.html">Plan dashboard</a>.</div>
+</div>
+</body></html>
