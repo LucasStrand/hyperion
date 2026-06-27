@@ -12,6 +12,7 @@ mod agent;
 mod diff;
 mod embed;
 mod entra;
+mod export;
 mod ingest;
 mod projects;
 mod roster;
@@ -603,6 +604,37 @@ fn wiki_save(
     let db = active_project_db(&projects)?;
     let id = projects::wiki_save(&db, &slug, &title, &html)?;
     Ok(json!({ "id": id }))
+}
+
+/// Dev-default location of the hand-authored wiki vault: `hyperion/docs/wiki`,
+/// resolved relative to this crate (`hyperion/src-tauri`). Overridable via the
+/// `HYPERION_WIKI_DIR` env var for packaged builds / tests.
+fn wiki_docs_dir() -> PathBuf {
+    if let Ok(d) = std::env::var("HYPERION_WIKI_DIR") {
+        return PathBuf::from(d);
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(|p| p.join("docs").join("wiki"))
+        .unwrap_or_else(|| PathBuf::from("docs/wiki"))
+}
+
+/// Static-site export of the wiki vault (M4). Gathers `hyperion/docs/wiki/*.html`
+/// and writes a self-contained folder to `dest`: every page verbatim plus a
+/// generated `index.html` gallery linking them. Returns `{written, index_path}`.
+/// Read-only toward bOS; the only writes are into the operator-chosen `dest`.
+#[tauri::command]
+fn wiki_export(dest: String) -> Result<Value, String> {
+    let dest = dest.trim();
+    if dest.is_empty() {
+        return Err("choose a destination folder".into());
+    }
+    let pages = export::gather_wiki_pages(&wiki_docs_dir())?;
+    if pages.is_empty() {
+        return Err("no wiki pages found to export".into());
+    }
+    let summary = export::export_site(&pages, Path::new(dest))?;
+    Ok(json!({ "written": summary.written, "index_path": summary.index_path }))
 }
 
 // ----------------------------- roster commands (M5) -----------------------------
@@ -1308,6 +1340,7 @@ pub fn run() {
             wiki_list,
             wiki_get,
             wiki_save,
+            wiki_export,
             agent_roster,
             agent_instincts_get,
             agent_instincts_set,

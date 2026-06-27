@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FAQ Accordion · Hyperion HTML-effectiveness artifacts</title>
+<!-- Pattern: an FAQ accordion. Collapsible question/answer pairs built on native
+     <details>/<summary> — interactive with zero JavaScript. Themeable via :root
+     tokens; no scripts, no external assets. -->
+<style>
+  :root{
+    --bg:#f4f6f8; --pan:#ffffff; --ink:#1f2a36; --mut:#67788a; --line:#dce3ea;
+    --acc:#2b6cb0; --acc-soft:#e8f1fb; --code:#0b3d2e; --codebg:#eef4f1;
+    --radius:10px; --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --mono:Consolas,ui-monospace,"SFMono-Regular",monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.55}
+  .wrap{max-width:760px;margin:0 auto;padding:40px 22px 80px}
+  .kicker{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--acc);font-weight:600}
+  h1{font-size:28px;margin:.18em 0 .1em}
+  .lede{font-size:16px;color:var(--mut);max-width:60ch}
+  .faq{margin-top:24px;display:grid;gap:10px}
+  details{background:var(--pan);border:1px solid var(--line);border-radius:var(--radius);padding:0 16px}
+  details[open]{border-color:var(--acc)}
+  summary{cursor:pointer;list-style:none;padding:14px 0;font-weight:600;font-size:15px;
+    display:flex;justify-content:space-between;align-items:center;gap:12px}
+  summary::-webkit-details-marker{display:none}
+  summary::after{content:"+";color:var(--acc);font-weight:700;font-size:20px;line-height:1}
+  details[open] summary::after{content:"\2013"}
+  details p{margin:0 0 14px;font-size:14.5px;color:var(--ink)}
+  code{font-family:var(--mono);background:var(--codebg);color:var(--code);padding:1px 5px;border-radius:4px;font-size:12.5px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="kicker">HTML-effectiveness · pattern 07</div>
+  <h1>FAQ Accordion</h1>
+  <p class="lede">Use for question-led reference where most readers want only one answer. Native
+    <code>&lt;details&gt;</code> gives collapse/expand with no JavaScript, so it survives any export.</p>
+
+  <div class="faq">
+    <details open>
+      <summary>Does export reach the network?</summary>
+      <p>No. <code>export_site</code> is pure over its inputs and a destination directory. It reads the
+        on-disk wiki and writes static files — no HTTP, no database.</p>
+    </details>
+    <details>
+      <summary>What ends up in the destination folder?</summary>
+      <p>One <code>&lt;slug&gt;.html</code> per wiki page, copied verbatim, plus a generated
+        <code>index.html</code> gallery that links them all.</p>
+    </details>
+    <details>
+      <summary>Can a page slug escape the folder?</summary>
+      <p>No. Slugs are validated against a strict <code>[A-Za-z0-9_-]</code> alphabet, so a page can only
+        ever land directly inside the chosen folder.</p>
+    </details>
+    <details>
+      <summary>How do I re-theme an exported page?</summary>
+      <p>Override the <code>:root</code> custom properties. Every artifact and wiki page reads its colours,
+        radius, and fonts from those tokens.</p>
+    </details>
+  </div>
+</div>
+</body>
+</html>
