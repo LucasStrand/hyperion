@@ -135,5 +135,34 @@
 
   <div class="foot">Documented as built · part of the main wiki collection · strictly read-only toward bOS.</div>
 </div>
+<style>
+/* M4 theme: dark preset for the wiki (token overrides; shared with the app shell). */
+:root[data-theme="dark"]{
+  --bg:#0f1620; --pan:#18222e; --ink:#dfe7ef; --mut:#8d9cad; --line:#2a3744;
+  --acc:#5aa2e6; --acc-soft:#1d3a57;
+  --done:#48b07d; --done-soft:#163a2b; --review:#d99a3a; --review-soft:#3a2e16;
+  --partial:#5aa2e6; --partial-soft:#1d3a57; --todo:#8d9cad; --todo-soft:#212e3c;
+  --ok:#48b07d; --soon:#d99a3a; --warn:#e8675c; --danger:#e8675c;
+  --code:#9fe0c0; --codebg:#142a22; --code-bg:#0b1118; --code-ink:#e6edf3;
+}
+.themebtn{position:fixed;right:14px;bottom:14px;z-index:50;font:13px/1 system-ui,sans-serif;
+  padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:var(--pan);
+  color:var(--ink);cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.18)}
+</style>
+<button type="button" class="themebtn" id="themebtn"></button>
+<script>
+/* M4 theme: read/persist the choice shared with the app (localStorage key). */
+(function(){
+  var KEY='hyperion-theme';
+  function cur(){try{return localStorage.getItem(KEY)==='dark'?'dark':'light';}catch(e){return 'light';}}
+  function apply(t){document.documentElement.setAttribute('data-theme',t);
+    var b=document.getElementById('themebtn');if(b)b.textContent=t==='dark'?'☀ Light':'☾ Dark';}
+  function set(t){try{localStorage.setItem(KEY,t);}catch(e){}apply(t);}
+  apply(cur());
+  var b=document.getElementById('themebtn');
+  if(b)b.onclick=function(){set(cur()==='dark'?'light':'dark');};
+})();
+</script>
+
 </body>
 </html>

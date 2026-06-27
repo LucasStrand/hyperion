@@ -1,6 +1,12 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <title>bOS Configurator</title>
+<script>
+/* M4 theme: apply the persisted choice before first paint to avoid a flash.
+   main.ts owns the switcher + persistence; this just reads the saved value. */
+(function(){try{var t=localStorage.getItem('hyperion-theme');
+  document.documentElement.setAttribute('data-theme',t==='dark'?'dark':'light');}catch(e){}})();
+</script>
 <style>
 :root{--bg:#ffffff;--ink:#1b1b1b;--mut:#6b7785;--line:#c9d2dc;--pan:#f3f5f8;
 --pan2:#e8edf3;--sel:#2f7bd6;--selbg:#cfe2fb;--acc:#1f6fc4;--kw:#1f6fc4;
@@ -258,7 +264,14 @@ letter-spacing:.04em;user-select:none;display:flex;align-items:center;gap:7px}
     <select id="pbsel"><option value="">- none -</option></select>
   </label>
   <button type="button" id="agentbtn" class="appbtn" title="Ask the bOS Co-pilot">&#128172; Agent</button>
+  <button id="wikibtn" class="appbtn" title="Edit project wiki pages">&#128214; Wiki</button>
   <button id="vaultbtn" class="appbtn" title="Encrypted secrets vault">&#128274; Vault</button>
+  <label class="mut" style="font-size:12px">Theme:
+    <select id="themesel" title="Light / dark theme">
+      <option value="light">Light</option>
+      <option value="dark">Dark</option>
+    </select>
+  </label>
   <span class="ham">&#9776;</span>
 </div>
 <div class="toolbar">
@@ -310,6 +323,30 @@ letter-spacing:.04em;user-select:none;display:flex;align-items:center;gap:7px}
         <textarea id="vscantext" rows="3" placeholder="paste config / notes&hellip;"></textarea>
         <button id="vscanbtn" class="appbtn">Scan for secrets</button>
         <div id="vscanout" class="mut" style="margin-top:6px"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="wiki" class="vmodal">
+  <div class="vbox" style="width:720px">
+    <div class="vh">&#128214; Wiki pages <span class="x" onclick="closeWiki()">&#10005;</span></div>
+    <div class="vb wikied">
+      <div class="wmut">Operator-editable knowledge pages, persisted per project. Saved HTML is
+        scanned for plaintext secrets &mdash; keep credentials in the &#128274; Vault. Open a project first.</div>
+      <div class="wrow">
+        <select id="wikilist"><option value="">- pick a page -</option></select>
+        <button type="button" id="wikinew" class="wbtn ghost">New page</button>
+        <span id="wikimeta" class="wmut"></span>
+      </div>
+      <div class="wrow">
+        <input id="wikislug" placeholder="slug (e.g. network-registry)">
+        <input id="wikititle" placeholder="title">
+      </div>
+      <textarea id="wikihtml" placeholder="<h1>Page</h1> &hellip; the page's HTML"></textarea>
+      <div class="wrow">
+        <button type="button" id="wikisave" class="wbtn">Save page</button>
+        <span id="wikistatus" class="wmut"></span>
       </div>
     </div>
   </div>

@@ -490,6 +490,116 @@ pub fn memory_load_for_prompt(db: &Path) -> Result<Vec<(String, String)>, String
     Ok(out)
 }
 
+// ----------------------------- wiki pages (M4) -----------------------------
+//
+// Operator-editable knowledge pages, persisted per project in `wiki_page`
+// (slug UNIQUE, title, html, updated_at). The in-app editor lists/loads/saves
+// pages; a page is the operator's own HTML, persisted unencrypted, so on write we
+// run the same plaintext-secret guard as `memory_set`/`context_add` — a page must
+// not be able to smuggle a credential into the project DB. Strictly local; never
+// written back to bOS.
+
+/// Upper bound on a stored wiki page (bytes of HTML). Generous for a full themed
+/// page (the bundled `plan.html` is ~18 KB) but capped so a single page can't
+/// bloat the project DB unboundedly. Enforced at write time in `wiki_save`.
+const MAX_WIKI_HTML_LEN: usize = 512 * 1024;
+
+/// All wiki pages for a project as JSON (slug, title, updated_at, bytes), ordered
+/// by slug for a stable picker. Page HTML is omitted here — fetched per page via
+/// `wiki_get` — so the list stays lean.
+pub fn wiki_list(db: &Path) -> Result<Vec<Value>, String> {
+    let conn = Connection::open(db).map_err(|e| format!("open db: {e}"))?;
+    let mut stmt = conn
+        .prepare("SELECT slug, title, updated_at, length(html) FROM wiki_page ORDER BY slug")
+        .map_err(|e| format!("{e}"))?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(json!({
+                "slug": r.get::<_, String>(0)?,
+                "title": r.get::<_, String>(1)?,
+                "updated_at": r.get::<_, String>(2)?,
+                "bytes": r.get::<_, i64>(3)?,
+            }))
+        })
+        .map_err(|e| format!("{e}"))?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row.map_err(|e| format!("{e}"))?);
+    }
+    Ok(out)
+}
+
+/// Fetch one wiki page by slug as JSON (slug, title, html, updated_at), or
+/// `Value::Null` when no such page exists (so the editor can start a fresh one).
+pub fn wiki_get(db: &Path, slug: &str) -> Result<Value, String> {
+    let slug = slugify(slug);
+    let conn = Connection::open(db).map_err(|e| format!("open db: {e}"))?;
+    conn.query_row(
+        "SELECT slug, title, html, updated_at FROM wiki_page WHERE slug = ?1",
+        rusqlite::params![slug],
+        |r| {
+            Ok(json!({
+                "slug": r.get::<_, String>(0)?,
+                "title": r.get::<_, String>(1)?,
+                "html": r.get::<_, String>(2)?,
+                "updated_at": r.get::<_, String>(3)?,
+            }))
+        },
+    )
+    .map(Some)
+    .or_else(|e| match e {
+        rusqlite::Error::QueryReturnedNoRows => Ok(None),
+        other => Err(format!("read wiki page: {other}")),
+    })
+    .map(|opt| opt.unwrap_or(Value::Null))
+}
+
+/// Insert or replace a wiki page, keyed by its (slugified) `slug`. Requires a
+/// non-empty slug and title and an HTML body within `MAX_WIKI_HTML_LEN`, and
+/// rejects content that looks like a plaintext secret (same guard as
+/// `memory_set`/`context_add`) so a saved page can't smuggle a credential into the
+/// unencrypted project DB. Stamps `updated_at = datetime('now')` and returns the
+/// row id. Atomic: a single `INSERT … ON CONFLICT(slug) DO UPDATE … RETURNING id`
+/// against the `wiki_page.slug` unique constraint, so concurrent writers can't race.
+pub fn wiki_save(db: &Path, slug: &str, title: &str, html: &str) -> Result<i64, String> {
+    if slug.trim().is_empty() {
+        return Err("wiki page needs a slug".into());
+    }
+    let slug = slugify(slug);
+    let title = title.trim();
+    if title.is_empty() {
+        return Err("wiki page title cannot be empty".into());
+    }
+    let html = html.trim();
+    if html.is_empty() {
+        return Err("wiki page content cannot be empty".into());
+    }
+    if html.len() > MAX_WIKI_HTML_LEN {
+        return Err("wiki page content is too long (max 512 KB)".into());
+    }
+    // Plaintext-secret guardrail (mirrors memory_set / context_add): a page is the
+    // operator's own HTML, persisted unencrypted, so a real credential pasted into
+    // the title or body would leak. Scan both. Secrets belong in the vault.
+    if vault::body_has_plaintext_secret(title) || vault::body_has_plaintext_secret(html) {
+        return Err(
+            "this page looks like it contains a plaintext secret — store it in the encrypted vault, not in a wiki page".into(),
+        );
+    }
+    let conn = Connection::open(db).map_err(|e| format!("open db: {e}"))?;
+    conn.query_row(
+        "INSERT INTO wiki_page(slug, title, html, updated_at)
+         VALUES (?1, ?2, ?3, datetime('now'))
+         ON CONFLICT(slug) DO UPDATE SET
+             title = excluded.title,
+             html = excluded.html,
+             updated_at = excluded.updated_at
+         RETURNING id",
+        rusqlite::params![slug, title, html],
+        |r| r.get::<_, i64>(0),
+    )
+    .map_err(|e| format!("upsert wiki page: {e}"))
+}
+
 // ----------------------------- context files (M1) -----------------------------
 //
 // Ingested reference material (a datasheet, a Milesight CSV export) lives in
@@ -967,6 +1077,84 @@ mod tests {
         assert!(!valid_mtype("notes"));
         assert!(!valid_mtype(""));
         assert!(!valid_mtype("Project")); // case-sensitive
+    }
+
+    #[test]
+    fn wiki_roundtrip_save_get_list() {
+        let (root, db) = fresh_db("wiki_rt");
+
+        // No pages yet: list is empty and get on a missing slug is JSON null.
+        assert!(wiki_list(&db).unwrap().is_empty());
+        assert_eq!(wiki_get(&db, "plan").unwrap(), Value::Null);
+
+        // Save a page; slug is normalized via slugify ("Build Plan" -> "build-plan").
+        let id = wiki_save(&db, "Build Plan", "Build Plan", "<h1>Plan</h1>").unwrap();
+        assert!(id > 0);
+        let list = wiki_list(&db).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0]["slug"], "build-plan");
+        assert_eq!(list[0]["title"], "Build Plan");
+        assert!(list[0]["bytes"].as_i64().unwrap() >= 1);
+        assert!(list[0].get("html").is_none()); // list view stays lean
+
+        // Get returns the full page including HTML.
+        let page = wiki_get(&db, "build-plan").unwrap();
+        assert_eq!(page["slug"], "build-plan");
+        assert_eq!(page["title"], "Build Plan");
+        assert_eq!(page["html"], "<h1>Plan</h1>");
+
+        // Upsert by slug: same slug updates title + html in place (no dup row).
+        let id2 = wiki_save(&db, "build-plan", "Build Plan v2", "<h1>Plan 2</h1>").unwrap();
+        assert_eq!(id, id2);
+        let list = wiki_list(&db).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0]["title"], "Build Plan v2");
+        assert_eq!(
+            wiki_get(&db, "build-plan").unwrap()["html"],
+            "<h1>Plan 2</h1>"
+        );
+
+        // Validation: empty slug / empty title / empty body are rejected.
+        assert!(wiki_save(&db, "   ", "Title", "<p>hi</p>").is_err());
+        assert!(wiki_save(&db, "x", "   ", "<p>hi</p>").is_err());
+        assert!(wiki_save(&db, "y", "Title", "   ").is_err());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn wiki_save_rejects_too_long_html() {
+        let (root, db) = fresh_db("wiki_toolong");
+
+        // One byte over the cap is rejected with a clear message; nothing is stored.
+        let huge = "x".repeat(MAX_WIKI_HTML_LEN + 1);
+        let err = wiki_save(&db, "huge", "Huge", &huge).unwrap_err();
+        assert!(err.contains("too long"), "got: {err}");
+        assert!(wiki_list(&db).unwrap().is_empty());
+
+        // A body exactly at the cap is accepted.
+        let at_cap = "y".repeat(MAX_WIKI_HTML_LEN);
+        assert!(wiki_save(&db, "atcap", "At cap", &at_cap).is_ok());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn wiki_save_rejects_plaintext_secret() {
+        let (root, db) = fresh_db("wiki_secret");
+
+        // A pasted PEM private key is a high-confidence secret and must be refused
+        // before it can land in the unencrypted project DB.
+        let html =
+            "<pre>-----BEGIN RSA PRIVATE KEY-----\nMIIabc123\n-----END RSA PRIVATE KEY-----</pre>";
+        let err = wiki_save(&db, "leaked", "Leaked", html).unwrap_err();
+        assert!(
+            err.contains("secret") || err.contains("vault"),
+            "got: {err}"
+        );
+        assert!(wiki_list(&db).unwrap().is_empty());
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
