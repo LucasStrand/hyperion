@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 use rusqlite::Connection;
 use serde_json::{json, Value};
 
+use crate::embed;
 use crate::ingest;
 use crate::vault;
 
@@ -107,6 +108,19 @@ fn init_db(conn: &Connection, name: &str) -> rusqlite::Result<()> {
              ord INTEGER NOT NULL, text TEXT NOT NULL
          );
          CREATE INDEX IF NOT EXISTS context_chunk_file ON context_chunk(file_id);
+         -- Optional embedding vector for a chunk (M2 RAG upgrade). One row per
+         -- chunk (chunk_id PRIMARY KEY), storing the source `model` + `dim` so a
+         -- later model/dimension change is detectable and stale-dimension rows can
+         -- be ignored (cosine returns 0.0 on a dim mismatch). `vec` is a
+         -- little-endian f32 blob. Additive + IF NOT EXISTS, so older project DBs
+         -- self-heal on open() with zero data loss; embeddings stay best-effort,
+         -- and an empty table simply means retrieval uses the keyword ranker.
+         -- foreign_keys enforcement is off (see context_chunk), so context_add /
+         -- context_delete cascade these rows MANUALLY, before their chunks.
+         CREATE TABLE IF NOT EXISTS context_embedding (
+             chunk_id INTEGER PRIMARY KEY REFERENCES context_chunk(id) ON DELETE CASCADE,
+             model TEXT NOT NULL, dim INTEGER NOT NULL, vec BLOB NOT NULL
+         );
          CREATE TABLE IF NOT EXISTS memory (
              id INTEGER PRIMARY KEY AUTOINCREMENT,
              mtype TEXT NOT NULL, slug TEXT NOT NULL, body TEXT NOT NULL, updated_at TEXT NOT NULL
@@ -530,6 +544,14 @@ pub fn context_add(db: &Path, name: &str, bytes: &[u8]) -> Result<Value, String>
             v
         };
         for id in stale {
+            // foreign_keys is off, so cascade manually: embeddings first (they FK
+            // the chunks), then the chunks, then the file row.
+            tx.execute(
+                "DELETE FROM context_embedding WHERE chunk_id IN
+                     (SELECT id FROM context_chunk WHERE file_id = ?1)",
+                rusqlite::params![id],
+            )
+            .map_err(|e| format!("{e}"))?;
             tx.execute(
                 "DELETE FROM context_chunk WHERE file_id = ?1",
                 rusqlite::params![id],
@@ -559,12 +581,83 @@ pub fn context_add(db: &Path, name: &str, bytes: &[u8]) -> Result<Value, String>
         }
     }
     tx.commit().map_err(|e| format!("commit: {e}"))?;
+    // Best-effort embeddings (M2). Done AFTER commit so a network/API failure can
+    // never roll back a successful ingest; on any error we simply leave the
+    // context_embedding table without rows for this file and retrieval falls back
+    // to the keyword ranker. The chunk-insert loop above does not capture rowids,
+    // so re-query them in `ord` order to align with the embedding vectors.
+    embed_file_chunks(&mut conn, file_id);
     Ok(json!({
         "id": file_id,
         "name": name,
         "kind": kind,
         "chunks": chunks.len(),
     }))
+}
+
+/// Best-effort: embed the chunks of `file_id` and store the vectors in
+/// `context_embedding`. Any failure (no API key, network error, malformed
+/// response) is swallowed — embeddings are optional and retrieval falls back to
+/// keyword scoring. Never propagates an error to the ingest path.
+fn embed_file_chunks(conn: &mut Connection, file_id: i64) {
+    // Re-query (id, text) in ord order; the insert loop didn't capture rowids.
+    let rows: Vec<(i64, String)> = {
+        let mut stmt = match conn
+            .prepare("SELECT id, text FROM context_chunk WHERE file_id = ?1 ORDER BY ord")
+        {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        let mapped = match stmt.query_map(rusqlite::params![file_id], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+        }) {
+            Ok(m) => m,
+            Err(_) => return,
+        };
+        let mut v = Vec::new();
+        for row in mapped {
+            match row {
+                Ok(t) => v.push(t),
+                Err(_) => return,
+            }
+        }
+        v
+    };
+    if rows.is_empty() {
+        return;
+    }
+    let texts: Vec<&str> = rows.iter().map(|(_, t)| t.as_str()).collect();
+    let (model, vectors) = match embed::embed(&texts) {
+        Ok(out) => out,
+        Err(_) => return, // not configured / network error -> keyword fallback
+    };
+    if vectors.len() != rows.len() {
+        return;
+    }
+    // Store vectors in their own short transaction.
+    let tx = match conn.transaction() {
+        Ok(t) => t,
+        Err(_) => return,
+    };
+    {
+        let mut stmt = match tx.prepare(
+            "INSERT OR REPLACE INTO context_embedding(chunk_id, model, dim, vec)
+             VALUES (?1, ?2, ?3, ?4)",
+        ) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        for ((chunk_id, _), vec) in rows.iter().zip(vectors.iter()) {
+            let blob = embed::vec_to_blob(vec);
+            if stmt
+                .execute(rusqlite::params![chunk_id, model, vec.len() as i64, blob])
+                .is_err()
+            {
+                return; // tx dropped (rolled back) on early return
+            }
+        }
+    }
+    let _ = tx.commit();
 }
 
 /// All ingested context files (id, name, kind, added_at, byte size, chunk count),
@@ -601,6 +694,14 @@ pub fn context_list(db: &Path) -> Result<Vec<Value>, String> {
 pub fn context_delete(db: &Path, id: i64) -> Result<bool, String> {
     let mut conn = Connection::open(db).map_err(|e| format!("open db: {e}"))?;
     let tx = conn.transaction().map_err(|e| format!("begin tx: {e}"))?;
+    // foreign_keys is off, so cascade manually: embeddings first (they FK the
+    // chunks), then the chunks, then the file row.
+    tx.execute(
+        "DELETE FROM context_embedding WHERE chunk_id IN
+             (SELECT id FROM context_chunk WHERE file_id = ?1)",
+        rusqlite::params![id],
+    )
+    .map_err(|e| format!("{e}"))?;
     tx.execute(
         "DELETE FROM context_chunk WHERE file_id = ?1",
         rusqlite::params![id],
@@ -616,11 +717,20 @@ pub fn context_delete(db: &Path, id: i64) -> Result<bool, String> {
     Ok(n > 0)
 }
 
-/// Retrieve up to `k` chunks most relevant to `query`, as `(file_name, chunk_text)`,
-/// ranked by keyword overlap (highest first; only chunks that match at all). A
-/// dependency-free stand-in until the embedding ranker lands. Reads every chunk —
-/// fine at project scale (a handful of files) and avoids an FTS dependency for now.
+/// Retrieve up to `k` chunks most relevant to `query`, as `(file_name, chunk_text)`.
+/// When the project has stored embeddings AND the query can be embedded, chunks are
+/// ranked by cosine similarity (highest first); otherwise this falls back to the
+/// dependency-free keyword-overlap ranker. Reads every chunk — fine at project scale
+/// (a handful of files) and avoids an FTS dependency for now. The signature/return
+/// type is intentionally stable: callers (lib.rs build_context_block) are untouched,
+/// and the chosen chunks are still UNTRUSTED data, fenced by the caller.
 pub fn context_retrieve(db: &Path, query: &str, k: usize) -> Result<Vec<(String, String)>, String> {
+    // Embedding branch (best-effort): only when the project actually has vectors
+    // AND the query embeds. Any failure falls through to the keyword path below.
+    if let Some(hits) = context_retrieve_embedding(db, query, k) {
+        return Ok(hits);
+    }
+
     let terms = ingest::keywords(query);
     if terms.is_empty() {
         return Ok(Vec::new());
@@ -650,6 +760,88 @@ pub fn context_retrieve(db: &Path, query: &str, k: usize) -> Result<Vec<(String,
         .take(k)
         .map(|(_, name, text)| (name, text))
         .collect())
+}
+
+/// Embedding-based retrieval. Returns `Some(top-k)` ranked by cosine similarity
+/// when the project has stored vectors AND the query embeds successfully; returns
+/// `None` (so the caller falls back to keyword scoring) when there are no
+/// embeddings, the embedding client is unconfigured/unreachable, or anything else
+/// goes wrong. Never errors — embeddings are strictly optional.
+fn context_retrieve_embedding(db: &Path, query: &str, k: usize) -> Option<Vec<(String, String)>> {
+    let conn = Connection::open(db).ok()?;
+    // Cheap gate: skip the network round-trip entirely if nothing is embedded.
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM context_embedding", [], |r| r.get(0))
+        .ok()?;
+    if count == 0 {
+        return None;
+    }
+    // Embed the query (single text). Any Err -> fall back to keyword.
+    let (_model, mut qvecs) = embed::embed(&[query]).ok()?;
+    let qvec = qvecs.pop()?;
+    if qvec.is_empty() {
+        return None;
+    }
+    rank_chunks_by_cosine(&conn, &qvec, k)
+}
+
+/// Pure ranker: score every stored embedding against `qvec` by cosine and return
+/// `Some(top-k)` `(file_name, chunk_text)`. Rows whose blob can't be decoded or
+/// whose dimension mismatches the query are skipped (so a stale-model row after an
+/// env change is ignored rather than mis-ranked). Returns `None` if nothing scored
+/// (caller falls back to keyword) or on any DB error. No network — separated from
+/// the query-embedding step above so it is unit-testable with synthetic vectors.
+fn rank_chunks_by_cosine(
+    conn: &Connection,
+    qvec: &[f32],
+    k: usize,
+) -> Option<Vec<(String, String)>> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT cf.name, cc.text, ce.vec FROM context_embedding ce
+             JOIN context_chunk cc ON cc.id = ce.chunk_id
+             JOIN context_file cf ON cf.id = cc.file_id",
+        )
+        .ok()?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, Vec<u8>>(2)?,
+            ))
+        })
+        .ok()?;
+    let mut scored: Vec<(f32, String, String)> = Vec::new();
+    for row in rows {
+        // Skip only the offending row on a read error — never discard every
+        // result (which would silently fall back to keyword for the whole query).
+        let Ok((name, text, blob)) = row else {
+            continue;
+        };
+        let v = match embed::blob_to_vec(&blob) {
+            Some(v) if v.len() == qvec.len() => v,
+            _ => continue,
+        };
+        let s = embed::cosine(qvec, &v);
+        if s > 0.0 {
+            scored.push((s, name, text));
+        }
+    }
+    if scored.is_empty() {
+        // Embeddings exist but nothing scored (e.g. all dim-mismatched after a
+        // model change). Fall back to keyword scoring rather than return empty.
+        return None;
+    }
+    // Highest cosine first; total_cmp is panic-free on any float (incl. NaN).
+    scored.sort_by(|a, b| b.0.total_cmp(&a.0));
+    Some(
+        scored
+            .into_iter()
+            .take(k)
+            .map(|(_, name, text)| (name, text))
+            .collect(),
+    )
 }
 
 #[cfg(test)]
@@ -801,6 +993,131 @@ mod tests {
         assert!(context_list(&db).unwrap().is_empty());
         assert!(context_retrieve(&db, "belimo", 4).unwrap().is_empty());
 
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Insert a context_file + one chunk per `texts` entry, returning the chunk ids
+    /// in order. Bypasses ingest/embeddings so a test can wire synthetic vectors
+    /// directly (no network).
+    fn seed_chunks(db: &Path, file_name: &str, texts: &[&str]) -> Vec<i64> {
+        let conn = Connection::open(db).unwrap();
+        conn.execute(
+            "INSERT INTO context_file(name, kind, added_at, content)
+             VALUES (?1, 'csv', datetime('now'), ?2)",
+            rusqlite::params![file_name, file_name.as_bytes()],
+        )
+        .unwrap();
+        let file_id = conn.last_insert_rowid();
+        let mut ids = Vec::new();
+        for (i, t) in texts.iter().enumerate() {
+            conn.execute(
+                "INSERT INTO context_chunk(file_id, ord, text) VALUES (?1, ?2, ?3)",
+                rusqlite::params![file_id, i as i64, t],
+            )
+            .unwrap();
+            ids.push(conn.last_insert_rowid());
+        }
+        ids
+    }
+
+    fn insert_embedding(db: &Path, chunk_id: i64, vec: &[f32]) {
+        let conn = Connection::open(db).unwrap();
+        conn.execute(
+            "INSERT INTO context_embedding(chunk_id, model, dim, vec) VALUES (?1, 'test', ?2, ?3)",
+            rusqlite::params![chunk_id, vec.len() as i64, embed::vec_to_blob(vec)],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn context_retrieve_falls_back_to_keyword_when_no_embeddings() {
+        let (root, db) = fresh_db("ctx_kw_fallback");
+        // No embeddings stored -> the cheap COUNT gate returns None and the keyword
+        // ranker runs. (CI has no embedding key, so this is the real default path.)
+        let _ = seed_chunks(
+            &db,
+            "devices.csv",
+            &[
+                "Belimo LR24A actuator on Modbus slave 7",
+                "lobby KNX scene 1.1",
+            ],
+        );
+        let hits = context_retrieve(&db, "which modbus slave is the belimo actuator", 4).unwrap();
+        assert!(!hits.is_empty());
+        assert!(hits[0].1.contains("Belimo"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn rank_chunks_by_cosine_orders_by_similarity() {
+        let (root, db) = fresh_db("ctx_cosine_rank");
+        // Three chunks with hand-picked orthogonal-ish vectors (no network).
+        let ids = seed_chunks(
+            &db,
+            "doc.txt",
+            &["alpha chunk", "beta chunk", "gamma chunk"],
+        );
+        insert_embedding(&db, ids[0], &[1.0, 0.0, 0.0]);
+        insert_embedding(&db, ids[1], &[0.0, 1.0, 0.0]);
+        insert_embedding(&db, ids[2], &[0.9, 0.1, 0.0]); // close to alpha
+
+        let conn = Connection::open(&db).unwrap();
+        // Query vector points along alpha; alpha should rank first, then gamma
+        // (0.9,0.1), then beta (orthogonal, cosine 0 -> dropped by the >0 filter).
+        let qvec = [1.0f32, 0.0, 0.0];
+        let hits = rank_chunks_by_cosine(&conn, &qvec, 4).unwrap();
+        assert_eq!(hits[0].1, "alpha chunk");
+        assert_eq!(hits[1].1, "gamma chunk");
+        // beta is orthogonal (cosine 0) and filtered out.
+        assert_eq!(hits.len(), 2);
+
+        // k caps the result count.
+        assert_eq!(rank_chunks_by_cosine(&conn, &qvec, 1).unwrap().len(), 1);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn rank_chunks_by_cosine_skips_dim_mismatch() {
+        let (root, db) = fresh_db("ctx_cosine_dim");
+        let ids = seed_chunks(&db, "doc.txt", &["good chunk", "stale chunk"]);
+        insert_embedding(&db, ids[0], &[1.0, 0.0, 0.0]); // matches query dim 3
+        insert_embedding(&db, ids[1], &[1.0, 0.0]); // stale 2-dim row -> skipped
+
+        let conn = Connection::open(&db).unwrap();
+        let qvec = [1.0f32, 0.0, 0.0];
+        let hits = rank_chunks_by_cosine(&conn, &qvec, 4).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].1, "good chunk");
+
+        // If EVERY row mismatches the query dim, nothing scores -> None (caller
+        // would then fall back to keyword).
+        let q4 = [1.0f32, 0.0, 0.0, 0.0];
+        assert!(rank_chunks_by_cosine(&conn, &q4, 4).is_none());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn context_delete_removes_embeddings() {
+        let (root, db) = fresh_db("ctx_del_emb");
+        let ids = seed_chunks(&db, "doc.txt", &["a", "b"]);
+        insert_embedding(&db, ids[0], &[1.0, 0.0]);
+        insert_embedding(&db, ids[1], &[0.0, 1.0]);
+        let conn = Connection::open(&db).unwrap();
+        let file_id: i64 = conn
+            .query_row(
+                "SELECT id FROM context_file WHERE name = 'doc.txt'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        drop(conn);
+        assert!(context_delete(&db, file_id).unwrap());
+        // No orphan embedding rows remain.
+        let conn = Connection::open(&db).unwrap();
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM context_embedding", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 0);
         let _ = std::fs::remove_dir_all(&root);
     }
 

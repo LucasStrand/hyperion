@@ -318,7 +318,7 @@ fn tail_chars(s: &str, n: usize) -> String {
 /// authorization headers, prompts, or API keys in their diagnostics; over-
 /// redaction in an error tail is harmless, leaking a credential is not. Whitespace
 /// layout is preserved so the surrounding message stays readable.
-fn redact_secrets(s: &str) -> String {
+pub(crate) fn redact_secrets(s: &str) -> String {
     s.split_inclusive(char::is_whitespace)
         .map(|piece| {
             let token = piece.trim_end();
@@ -335,7 +335,7 @@ fn redact_secrets(s: &str) -> String {
 /// Heuristic: does this whitespace-delimited token look like a credential?
 /// Matches well-known key prefixes (OpenAI/OpenRouter/Anthropic/GitHub/Slack…)
 /// and long opaque tokens that mix letters and digits with no path separators.
-fn looks_secret(token: &str) -> bool {
+pub(crate) fn looks_secret(token: &str) -> bool {
     // Strip surrounding quotes/punctuation so `"sk-…",` still matches.
     let t = token.trim_matches(|c: char| {
         matches!(

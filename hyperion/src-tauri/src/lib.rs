@@ -9,6 +9,7 @@
 // Strictly read-only with respect to the bOS system — never writes to it.
 
 mod agent;
+mod embed;
 mod entra;
 mod ingest;
 mod projects;
