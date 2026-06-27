@@ -646,8 +646,9 @@ async function showInstinctHistory(){
 
 // ---------- context files (Phase 3, M1) ----------
 // Ingested reference material (datasheets, Milesight CSV exports) the co-pilot
-// retrieves from on every ask. Add a text/markdown/CSV/JSON file via the OS file
-// picker; it is extracted, chunked, and stored per project. Escape everything.
+// retrieves from on every ask. Add a text/markdown/CSV/JSON file, a PDF, or a Word
+// .docx via the OS file picker; it is extracted, chunked, and stored per project.
+// Escape everything.
 let ctxOpen=false;
 function toggleCtx(){
   ctxOpen=!ctxOpen;
@@ -660,7 +661,7 @@ async function refreshContext(){
   try{ files=await api.contextList(); }catch(e){ files=[]; }
   $('#actxcount').textContent = files.length ? (files.length+' file'+(files.length===1?'':'s')) : '';
   if(!files.length){
-    list.innerHTML='<div class="mut" style="font-size:12px;padding:4px 2px">No context files yet. Add a datasheet, a Milesight CSV export, or notes — the co-pilot retrieves from them on every ask. Open a project first.</div>';
+    list.innerHTML='<div class="mut" style="font-size:12px;padding:4px 2px">No context files yet. Add a datasheet (PDF, Word, text, CSV) or notes — the co-pilot retrieves from them on every ask. Open a project first.</div>';
     return;
   }
   list.innerHTML=files.map(f=>'<div class="actxitem"><div class="mtop">'
@@ -678,7 +679,7 @@ async function addContextFile(){
   let path;
   try{
     path=await openFileDialog({ multiple:false, title:'Add a context file',
-      filters:[{ name:'Text/CSV/Markdown/JSON', extensions:['txt','md','markdown','csv','tsv','log','json','yaml','yml','xml','ini','cfg','conf'] }] });
+      filters:[{ name:'Documents (PDF, Word, text, CSV, JSON)', extensions:['pdf','docx','txt','md','markdown','csv','tsv','log','json','yaml','yml','xml','ini','cfg','conf'] }] });
   }catch(e){ alert('Could not open the file picker: '+e); return; }
   if(!path) return;
   const btn=$('#actxadd'); btn.disabled=true; btn.textContent='Adding…';
