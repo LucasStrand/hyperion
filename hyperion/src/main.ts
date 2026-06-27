@@ -38,7 +38,7 @@ const api = {
 };
 
 const $ = (s) => document.querySelector(s), $$ = (s) => [...document.querySelectorAll(s)];
-function esc(s){return (''+s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+function esc(s){return (''+s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 
 // ---------- icons by node type ----------
 function icon(t){t=t||'';
@@ -232,11 +232,12 @@ function loadGuideFromObject(pb){
   if(!pb || typeof pb!=='object' || Array.isArray(pb)) throw new Error('not a playbook object');
   if(typeof pb.feature!=='string' || !pb.feature.trim()) throw new Error('missing a "feature" name');
   if(!Array.isArray(pb.steps) || !pb.steps.length) throw new Error('needs a non-empty "steps" array');
+  for(const s of pb.steps){ if(!s || typeof s!=='object' || Array.isArray(s)) throw new Error('every step must be a non-null object'); }
   PB=pb; STEP=-1;
   $('#gtitle').textContent=PB.feature||'Guide';
   let h=''; if(PB.summary) h+='<div class="mut" style="margin-bottom:8px">'+esc(PB.summary)+'</div>';
   (PB.steps||[]).forEach((s,i)=>{h+='<div class="gstep" data-i="'+i+'" onclick="gotoStep('+i+')">'
-    +'<div><span class="gn">'+(s.n||i+1)+'</span><span class="gt">'+esc(s.title||'')+'</span>'
+    +'<div><span class="gn">'+esc(''+(s.n||i+1))+'</span><span class="gt">'+esc(s.title||'')+'</span>'
     +(s.check?'<span class="badge-st st-todo" id="bst'+i+'">checking...</span>':'')+'</div>'
     +(s.check?'<div class="chklist" id="chk'+i+'"></div>':'')
     +(s.detail?'<div class="gd">'+esc(s.detail)+'</div>':'')
@@ -263,7 +264,7 @@ function flatten(list,anc,out){ (list||[]).forEach(c=>{
   out.push({text:c.text||'',anc:anc}); flatten(c.children,anc.concat([c.text||'']),out);}); return out;}
 async function evalCheck(chk){
   const n=await getNode(chk.node);
-  const results=(chk.all||[]).map(p=>{
+  const results=(Array.isArray(chk.all)?chk.all:[]).map(p=>{
     let ok=false;
     if('exists' in p) ok=!!n;
     else if(!n) ok=false;
@@ -275,7 +276,7 @@ async function evalCheck(chk){
     return {label:p.label||JSON.stringify(p),ok};
   });
   const pass=results.filter(r=>r.ok).length;
-  const status=pass===results.length?'done':(pass===0?'todo':'partial');
+  const status = results.length===0 ? 'todo' : (pass===results.length ? 'done' : (pass===0 ? 'todo' : 'partial'));
   return {status,pass,total:results.length,results};
 }
 async function runChecks(){
@@ -295,7 +296,7 @@ async function runChecks(){
 function diffTree(list){
   if(!list||!list.length) return '<div class="cmds"><div class="cmd mut">(empty)</div></div>';
   let h='<div class="cmds">';
-  list.forEach(c=>{const cls='cmd c-'+(c.cmd||'').toLowerCase()+(c.added?' added':'')+(c.removed?' removed':'');
+  list.forEach(c=>{const cls='cmd c-'+esc((c.cmd||'').toLowerCase())+(c.added?' added':'')+(c.removed?' removed':'');
     h+='<div class="'+cls+'"><span class="t">'+esc(c.text||c.cmd||'')+'</span>';
     if(c.children&&c.children.length) h+=diffTree(c.children);
     h+='</div>';});
@@ -485,7 +486,7 @@ async function sendAsk(){
   }
 }
 
-Object.assign(window, { navigate, gotoStep, closeGuide, showNode, showDiff, closeVault, closeAgent, loadGuideFromObject, loadPlaybookFromBlock });
+Object.assign(window, { navigate, gotoStep, closeGuide, showNode, showDiff, closeVault, closeAgent, loadPlaybookFromBlock });
 
 // ---------- config render (state + tree); reused after a project/snapshot change ----------
 async function renderConfig(){
