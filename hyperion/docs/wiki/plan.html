@@ -85,7 +85,7 @@
     <div class="sub">Enterprise IoT workbench for ComfortClick bOS, operated by an AI agent. The full vision, phased — crossed off as it lands.</div>
     <div class="overall">
       <div class="bar"><i id="overallbar"></i></div>
-      <div class="pct" id="overallpct">70%</div>
+      <div class="pct" id="overallpct">84%</div>
     </div>
     <div class="legend">
       <span><i class="dot done"></i> Done</span>
@@ -199,12 +199,12 @@
         <li class="done">Emit runnable playbook JSON</li>
         <li class="done">Route emitted playbook into the auto-grader</li>
         <li class="done">RAG over context — cosine embeddings + keyword fallback</li>
-        <li class="todo">Auto-select MCP/skills by context</li>
+        <li class="done">Auto-select MCP/skills by context</li>
       </ul>
     </div>
 
     <div class="mod">
-      <h3>M3 — Code standard <span class="pill todo">To do</span></h3>
+      <h3>M3 — Code standard <span class="pill partial">Partial</span></h3>
       <p class="desc">Define, teach, and enforce a project code standard retroactively.</p>
       <ul class="checks">
         <li class="done">Define / recommend a standard → wiki canonical page</li>
@@ -214,7 +214,7 @@
     </div>
 
     <div class="mod">
-      <h3>M4 — Themeable wiki vault <span class="pill partial">Partial</span></h3>
+      <h3>M4 — Themeable wiki vault <span class="pill done">Built</span></h3>
       <p class="desc">Auto-documented, pedagogical, exportable, re-themeable.</p>
       <ul class="checks">
         <li class="done">Per-feature wiki docs (built as we go)</li>
@@ -238,14 +238,14 @@
     </div>
 
     <div class="mod">
-      <h3>M6 — Enterprise security <span class="pill partial">Partial</span></h3>
+      <h3>M6 — Enterprise security <span class="pill done">Built</span></h3>
       <p class="desc">Encrypted vault, Microsoft SSO unlock, security scans.</p>
       <ul class="checks">
         <li class="done">AES-256-GCM vault, key in OS keychain</li>
         <li class="done">Microsoft Entra SSO gates unlock</li>
         <li class="done">Plaintext-secret guardrail</li>
-        <li class="todo">ECC agents-shield security scans</li>
-        <li class="todo">Enterprise-criteria gate before "done"</li>
+        <li class="done">ECC agents-shield security scans</li>
+        <li class="done">Enterprise-criteria gate before "done"</li>
       </ul>
     </div>
 
@@ -261,13 +261,13 @@
     </div>
 
     <div class="mod">
-      <h3>M8 — Version control (GitHub × ComfortClick) <span class="pill todo">To do</span></h3>
+      <h3>M8 — Version control (GitHub × ComfortClick) <span class="pill done">Built</span></h3>
       <p class="desc">Semantic .bos diffs, human PRs with AI docs, timeline.</p>
       <ul class="checks">
         <li class="done">Snapshot semantic diff engine</li>
-        <li class="todo">In-app PRs (human narrative + AI docs)</li>
-        <li class="todo">Comment/argue threads + merge</li>
-        <li class="todo">Project timeline</li>
+        <li class="done">In-app PRs (data model: narrative + AI docs)</li>
+        <li class="done">Comment/argue threads + merge</li>
+        <li class="done">Project timeline</li>
       </ul>
     </div>
 
@@ -279,8 +279,8 @@
         <li class="done">Prefer local runtimes</li>
         <li class="done">ECC agents drive the dev flow (reviewers, fixers, workflows)</li>
         <li class="done">CI gate + community health (public repo)</li>
-        <li class="todo">Auto-select MCP/skills per file type</li>
-        <li class="todo">DesignSync for professional client UI</li>
+        <li class="done">Auto-select MCP/skills per file type</li>
+        <li class="done">DesignSync for professional client UI</li>
       </ul>
     </div>
 
@@ -351,7 +351,7 @@
 <script>
   // Animate the overall bar to its target on load (purely cosmetic).
   (function(){
-    var pct = 70;
+    var pct = 84;
     requestAnimationFrame(function(){
       var el = document.getElementById('overallbar');
       if (el) el.style.width = pct + '%';
