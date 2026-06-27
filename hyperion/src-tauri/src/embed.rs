@@ -128,7 +128,9 @@ pub fn embed<S: AsRef<str>>(texts: &[S]) -> Result<(String, Vec<Vec<f32>>), Stri
     // Only http(s) — refuse file://, data://, or a typo'd scheme that would carry
     // the Authorization header (and the context body) to an unintended target.
     if !base.starts_with("https://") && !base.starts_with("http://") {
-        return Err("embeddings: HYPERION_EMBED_BASE_URL must start with http:// or https://".into());
+        return Err(
+            "embeddings: HYPERION_EMBED_BASE_URL must start with http:// or https://".into(),
+        );
     }
     let model = std::env::var("HYPERION_EMBED_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.into());
     let url = format!("{base}/embeddings");
@@ -222,7 +224,9 @@ fn parse_embeddings(v: &Value, n: usize) -> Result<Vec<Vec<f32>>, String> {
         // loudly rather than silently overwriting — the caller falls back to
         // keyword scoring instead of mis-ranking on a malformed response.
         if out[idx].replace(vec).is_some() {
-            return Err(format!("embeddings: response mapped two vectors to index {idx}"));
+            return Err(format!(
+                "embeddings: response mapped two vectors to index {idx}"
+            ));
         }
     }
     out.into_iter()
