@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Code Standard &amp; Audit · Hyperion Wiki</title>
+<!-- Feature doc: M3 canonical code standard + deterministic audit (Milestone #5). Themeable via :root tokens (M4). -->
+<style>
+  :root{
+    --bg:#f4f6f8; --pan:#ffffff; --ink:#1f2a36; --mut:#67788a; --line:#dce3ea;
+    --acc:#2b6cb0; --acc-soft:#e8f1fb; --ok:#2e9e6a; --warn:#b3261e; --soon:#d98014;
+    --code:#0b3d2e; --codebg:#eef4f1; --radius:10px;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --mono:Consolas,ui-monospace,"SFMono-Regular",monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.6}
+  .wrap{max-width:880px;margin:0 auto;padding:36px 22px 80px}
+  a{color:var(--acc)}
+  .crumb{font-size:13px;color:var(--mut);margin-bottom:8px}
+  .kicker{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--acc);font-weight:600}
+  h1{font-size:30px;margin:.16em 0 .12em}
+  .lede{font-size:17px;color:var(--mut);max-width:64ch}
+  h2{font-size:15px;letter-spacing:.04em;text-transform:uppercase;color:var(--mut);
+     margin:34px 0 10px;border-bottom:1px solid var(--line);padding-bottom:6px}
+  p,li{font-size:14.5px}
+  code{font-family:var(--mono);background:var(--codebg);color:var(--code);padding:1px 5px;border-radius:4px;font-size:13px}
+  .pill{display:inline-block;font-size:11px;font-weight:600;border-radius:999px;padding:2px 9px}
+  .pill.done{background:#eaf7f0;color:var(--ok)} .pill.soon{background:#fdf3e6;color:var(--soon)}
+  .sev{display:inline-block;font-size:11px;font-weight:600;border-radius:999px;padding:1px 8px}
+  .sev.high{background:#fdecea;color:var(--warn)} .sev.medium{background:#fdf3e6;color:var(--soon)} .sev.low{background:#eef2f6;color:var(--mut)}
+  table{border-collapse:collapse;width:100%;margin:10px 0;font-size:13.5px}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:var(--acc-soft);font-weight:600}
+  td code{white-space:nowrap}
+  .note{background:var(--acc-soft);border-left:3px solid var(--acc);border-radius:0 6px 6px 0;padding:10px 14px;margin:14px 0}
+  .warn{background:#fdecea;border-left:3px solid var(--warn);border-radius:0 6px 6px 0;padding:10px 14px;margin:14px 0}
+  .flow{font-family:var(--mono);font-size:12.5px;background:var(--pan);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;white-space:pre;overflow:auto}
+  .foot{margin-top:44px;border-top:1px solid var(--line);padding-top:14px;color:var(--mut);font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="crumb"><a href="index.html">&larr; Hyperion Wiki</a> / Code Standard &amp; Audit</div>
+  <div class="kicker">Phase 3 · milestone M3 · one standard, audited deterministically</div>
+  <h1>Code Standard &amp; Audit <span class="pill done">Built</span></h1>
+  <p class="lede">Hyperion has one canonical way to write its code, derived from the conventions the codebase
+    already follows &mdash; and a deterministic audit that flags anything that drifts away from it, with the fix
+    spelled out. No linter daemon, no network: pure heuristics over the source text.</p>
+
+  <h2>The Rust standard</h2>
+  <p>The backend (<code>src-tauri/src</code>) is Rust <b>edition 2021</b>. Two tools are the source of truth for
+    style and lint, and both must be clean before anything merges:</p>
+  <ul>
+    <li><b>Formatting</b> &mdash; <code>cargo fmt --all</code>; CI runs <code>cargo fmt --all -- --check</code>.
+      Spaces, never tabs.</li>
+    <li><b>Lint</b> &mdash; <code>cargo clippy --all-targets -- -D warnings</code>. Warnings are errors.</li>
+    <li><b>No panics in non-test code</b> &mdash; no <code>.unwrap()</code>, no <code>.expect(&hellip;)</code>,
+      no <code>panic!</code>/<code>todo!</code>/<code>unimplemented!</code>/<code>unreachable!</code>. The app
+      should never crash on bad input; surface the condition instead.</li>
+    <li><b>Errors as <code>Result&lt;_, String&gt;</code> at the command layer</b> &mdash; every
+      <code>#[tauri::command]</code> returns either a value or a human-readable <code>String</code> error, and
+      lower layers propagate with <code>?</code>. Lock poisoning is recovered (<code>unwrap_or_else(|e| e.into_inner())</code>),
+      never unwrapped.</li>
+    <li><b>One <code>#[cfg(test)]</code> module per file</b> &mdash; tests live in a single trailing
+      <code>mod tests</code> block. Inside tests, <code>.unwrap()</code> is fine and expected.</li>
+    <li><b>Module doc-comment</b> &mdash; each file opens with a <code>//</code> header explaining what it does
+      and its read-only-toward-bOS contract.</li>
+  </ul>
+
+  <h2>The TypeScript standard</h2>
+  <p>The webview (<code>src/main.ts</code>) is a vanilla, dependency-light TypeScript port of the original Flask
+    view. It carries a deliberate <code>// @ts-nocheck</code> at the top (it is a faithful port, not a rewrite);
+    new, strictly-typed logic is extracted into small <code>src/lib</code> helpers as it grows. The baseline:</p>
+  <ul>
+    <li><b>No stray <code>console.log(&hellip;)</code></b> &mdash; debug logging doesn't ship.</li>
+    <li><b>Spaces, not tabs</b>, and a single trailing newline &mdash; same as the Rust side.</li>
+    <li><b>Talk to the backend through <code>invoke()</code></b> &mdash; the command shim, never <code>fetch</code>.</li>
+  </ul>
+
+  <h2>The audit</h2>
+  <p>The standard is enforced by a pure function in <code>standard.rs</code>:</p>
+  <div class="flow">audit(files: &[(path, contents)]) ──► Vec&lt;Finding { path, line, rule, message, severity }&gt;</div>
+  <p>It takes file <em>contents</em> as input &mdash; no filesystem walk, no network &mdash; so it is fully
+    unit-testable with synthetic source. The <code>code_audit</code> command is the only piece that reads the
+    real sources off disk (<code>src-tauri/src/*.rs</code> + <code>src/*.ts</code>) and hands them to
+    <code>audit</code>. Each rule is a low-noise text heuristic; comment lines that merely <em>mention</em> a
+    pattern (like this page's own backend) are exempt.</p>
+
+  <table>
+    <tr><th>Rule</th><th>Applies to</th><th>Severity</th><th>Flags &amp; suggested fix</th></tr>
+    <tr><td><code>no-unwrap</code></td><td>Rust</td><td><span class="sev medium">medium</span></td>
+      <td><code>.unwrap()</code> outside a <code>#[cfg(test)]</code> region &mdash; propagate with <code>?</code> or map to <code>Result&lt;_, String&gt;</code>.</td></tr>
+    <tr><td><code>no-expect</code></td><td>Rust</td><td><span class="sev medium">medium</span></td>
+      <td><code>.expect(&hellip;)</code> in non-test code &mdash; return a descriptive error instead.</td></tr>
+    <tr><td><code>no-panic</code></td><td>Rust</td><td><span class="sev high">high</span></td>
+      <td><code>panic!</code>/<code>todo!</code>/<code>unimplemented!</code>/<code>unreachable!</code> in non-test code &mdash; surface as an error so the app never crashes.</td></tr>
+    <tr><td><code>no-console</code></td><td>TS</td><td><span class="sev low">low</span></td>
+      <td>A stray <code>console.log(&hellip;)</code> &mdash; remove before shipping.</td></tr>
+    <tr><td><code>tab-indentation</code></td><td>any</td><td><span class="sev low">low</span></td>
+      <td>A tab in leading indentation &mdash; reformat to spaces.</td></tr>
+    <tr><td><code>missing-trailing-newline</code></td><td>any</td><td><span class="sev low">low</span></td>
+      <td>File doesn't end in a single <code>\n</code> &mdash; add one.</td></tr>
+  </table>
+
+  <div class="note">The audit is intentionally a <b>heuristic over source text</b>, not a compiler. It complements
+    <code>cargo fmt</code> and <code>clippy</code> (which remain the hard gate) by catching the project-specific
+    rules a generic linter doesn't know &mdash; and it does so deterministically, offline, in a few milliseconds.</div>
+
+  <h2>Commands</h2>
+  <table>
+    <tr><th>Command</th><th>Does</th></tr>
+    <tr><td><code>code_standard</code></td><td>Returns the canonical standard as a structured summary (title, prose, and the rule list with fixes). Static.</td></tr>
+    <tr><td><code>code_audit</code></td><td>Reads Hyperion's own <code>*.rs</code> + <code>*.ts</code> sources and returns one <code>Finding</code> per deviation: <code>{path, line, rule, message, severity}</code>.</td></tr>
+  </table>
+
+  <div class="foot">Hyperion · Phase 3 (M3 code standard + audit) · read-only toward bOS; runs fully offline.
+    See also <a href="agent.html">The Agent</a> · <a href="context.html">Context Files</a> ·
+    <a href="roster.html">Agent Roster</a> · <a href="plan.html">Plan dashboard</a>.</div>
+</div>
+<style>
+/* M4 theme: dark preset for the wiki (token overrides; shared with the app shell). */
+:root[data-theme="dark"]{
+  --bg:#0f1620; --pan:#18222e; --ink:#dfe7ef; --mut:#8d9cad; --line:#2a3744;
+  --acc:#5aa2e6; --acc-soft:#1d3a57;
+  --done:#48b07d; --done-soft:#163a2b; --review:#d99a3a; --review-soft:#3a2e16;
+  --partial:#5aa2e6; --partial-soft:#1d3a57; --todo:#8d9cad; --todo-soft:#212e3c;
+  --ok:#48b07d; --soon:#d99a3a; --warn:#e8675c; --danger:#e8675c;
+  --code:#9fe0c0; --codebg:#142a22; --code-bg:#0b1118; --code-ink:#e6edf3;
+}
+.themebtn{position:fixed;right:14px;bottom:14px;z-index:50;font:13px/1 system-ui,sans-serif;
+  padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:var(--pan);
+  color:var(--ink);cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.18)}
+</style>
+<button type="button" class="themebtn" id="themebtn"></button>
+<script>
+/* M4 theme: read/persist the choice shared with the app (localStorage key). */
+(function(){
+  var KEY='hyperion-theme';
+  function cur(){try{return localStorage.getItem(KEY)==='dark'?'dark':'light';}catch(e){return 'light';}}
+  function apply(t){document.documentElement.setAttribute('data-theme',t);
+    var b=document.getElementById('themebtn');if(b)b.textContent=t==='dark'?'☀ Light':'☾ Dark';}
+  function set(t){try{localStorage.setItem(KEY,t);}catch(e){}apply(t);}
+  apply(cur());
+  var b=document.getElementById('themebtn');
+  if(b)b.onclick=function(){set(cur()==='dark'?'light':'dark');};
+})();
+</script>
+
+</body></html>

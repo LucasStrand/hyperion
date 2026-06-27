@@ -15,6 +15,7 @@ mod entra;
 mod ingest;
 mod projects;
 mod roster;
+mod standard;
 mod suggest;
 mod vault;
 
@@ -739,6 +740,34 @@ fn context_suggest(
         .collect()
 }
 
+// ----------------------------- code standard (M3) -----------------------------
+//
+// The recommended project code standard (standard.rs) plus a deterministic audit
+// that flags deviations in Hyperion's own sources. Both are fully local and
+// read-only toward bOS; no project needs to be open (this inspects the app's own
+// source tree, not project data).
+
+/// The canonical code standard as a structured summary (title, prose, and the
+/// list of audit rules with their fixes). Static and side-effect-free; the prose
+/// version lives in `docs/wiki/code-standard.html`.
+#[tauri::command]
+fn code_standard() -> Value {
+    standard::standard_summary()
+}
+
+/// Audit Hyperion's own sources against the code standard. Reads every
+/// `src-tauri/src/*.rs` and `src/*.ts` off disk (relative to the crate root) and
+/// runs the pure `standard::audit`, returning one flat JSON object per deviation.
+#[tauri::command]
+fn code_audit() -> Result<Vec<Value>, String> {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let files = standard::collect_project_sources(&manifest_dir)?;
+    standard::audit(&files)
+        .iter()
+        .map(|f| serde_json::to_value(f).map_err(|e| format!("serialize finding: {e}")))
+        .collect()
+}
+
 // ----------------------------- vault commands -----------------------------
 
 /// Vault status (exists / unlocked / secret count) — never returns values.
@@ -1317,6 +1346,8 @@ pub fn run() {
             context_add_file,
             context_delete,
             context_suggest,
+            code_standard,
+            code_audit,
             vault_status,
             vault_unlock,
             vault_lock,
