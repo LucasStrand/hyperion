@@ -192,3 +192,75 @@
 [data-theme="dark"] .wikied select,
 [data-theme="dark"] .wikied input,
 [data-theme="dark"] .wikied textarea { background: var(--pan2); }
+
+/* ---- Network registry (Group A; inside the Vault modal) — new selectors only ---- */
+.vnet { border-top: 1px dashed var(--line); padding-top: 8px; display: flex; flex-direction: column; gap: 8px; }
+.vneth { font-weight: 600; }
+.vlist .vi .rev { color: var(--acc); cursor: pointer; font-size: 12px; }
+.netadd { display: flex; flex-direction: column; gap: 6px; }
+.netadd .vrow { display: flex; gap: 6px; }
+.netadd input { flex: 1; min-width: 0; padding: 4px 8px; border: 1px solid var(--line); border-radius: 4px;
+  font: inherit; background: #fff; color: var(--ink); }
+.netadd input:disabled { background: #f3f5f8; }
+.netadd #netsave { align-self: flex-end; }
+[data-theme="dark"] .netadd input { background: var(--pan2); }
+[data-theme="dark"] .netadd input:disabled { background: var(--line); }
+
+/* ---- Project modal (Group A; #vcs): PRs, timeline, snapshot diff) — new selectors only ---- */
+.vcsform { display: flex; flex-direction: column; gap: 6px; border-top: 1px dashed var(--line);
+  margin-top: 9px; padding-top: 9px; }
+.vcsform .vcsformh { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--mut); }
+.vcsform input, .vcsform textarea { padding: 5px 8px; border: 1px solid var(--line); border-radius: 5px;
+  font: inherit; background: #fff; color: var(--ink); }
+.vcsform textarea { resize: vertical; min-height: 42px; }
+.vcsform .appbtn, .netadd .appbtn { align-self: flex-end; }
+.amemrow #tlsummary { flex: 1; min-width: 0; }
+/* Timeline add button mirrors the memory form's #amemsave (id-specific in index.html). */
+.amemadd #tladd { align-self: flex-end; font-size: 12px; padding: 4px 14px; border: 1px solid var(--acc);
+  background: var(--acc); color: #fff; border-radius: 6px; cursor: pointer; }
+.amemadd #tladd:hover { background: #1a5da8; }
+.prrow { cursor: pointer; }
+.prrow:hover { border-color: var(--acc); }
+.prrow .prcmt { margin-left: auto; font-size: 11px; flex: 0 0 auto; }
+.prback { display: inline-block; margin-bottom: 8px; font-size: 12px; }
+.prdh { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+.prdh .prtitle { font-weight: 600; }
+.prdoc { white-space: normal; }
+.prcmtbubble { border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; margin-bottom: 6px; background: #fbfcfd; }
+.prcmtbubble:last-child { margin-bottom: 0; }
+.prcmth { font-size: 11px; margin-bottom: 2px; }
+.prcmtbody { white-space: pre-wrap; overflow-wrap: anywhere; }
+.prdactions { display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+.prdactions select { padding: 3px 6px; border: 1px solid var(--line); border-radius: 5px; font: inherit; background: #fff; color: var(--ink); }
+.prdanger { margin-left: auto; color: #b3261e; border-color: #f3b4ad; }
+.prdanger:hover:not(:disabled) { background: #ffe3df; }
+.diffpick { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.diffpick select { flex: 1; min-width: 0; padding: 4px 7px; border: 1px solid var(--line); border-radius: 5px; font: inherit; background: #fff; color: var(--ink); }
+.diffpick .arr { color: var(--mut); }
+.diffout .cmd .mut { font-weight: 400; }
+[data-theme="dark"] .vcsform input,
+[data-theme="dark"] .vcsform textarea,
+[data-theme="dark"] .prdactions select,
+[data-theme="dark"] .diffpick select { background: var(--pan2); }
+[data-theme="dark"] .prcmtbubble { background: var(--pan2); }
+
+/* ---- Group B (knowledge & quality; #kq modal) — new selectors only ---- */
+/* The #kq sections reuse the .amem collapsibles + .amemitem list rows from the
+ * memory/PR panels. These rules only style the inline input rows (which sit
+ * outside .amemadd) and a couple of badge tints, so nothing existing changes. */
+#kq .amemrow { align-items: center; }
+#kq .amemrow input {
+  flex: 1; min-width: 0;
+  padding: 4px 8px; border: 1px solid var(--line); border-radius: 5px;
+  font: inherit; background: #fff; color: var(--ink);
+}
+#kq .amemrow .appbtn { flex: 0 0 auto; }
+[data-theme="dark"] #kq .amemrow input { background: var(--pan2); }
+/* High/critical severity reads red; medium stays amber (st-partial), low grey. */
+.badge-st.sev-high, .badge-st.sev-critical { background: #ffe3df; color: #b3261e; border-color: #f3b4ad; }
+/* Tool-recommendation kind chip: skill stays green (.actxkind default), mcp goes blue. */
+.actxkind.mcp { background: #eef2fb; color: #1f6fc4; }
+[data-theme="dark"] .actxkind.mcp { background: rgba(90, 162, 230, .15); color: var(--acc); }
+[data-theme="dark"] .badge-st.sev-high, [data-theme="dark"] .badge-st.sev-critical {
+  background: rgba(232, 103, 92, .15); color: var(--bool); border-color: var(--bool);
+}

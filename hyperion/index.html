@@ -280,6 +280,8 @@ input:focus-visible,select:focus-visible,textarea:focus-visible,.amsg .pbload:fo
   <button type="button" id="agentbtn" class="appbtn" title="Ask the bOS Co-pilot">&#128172; Agent</button>
   <button id="wikibtn" class="appbtn" title="Edit project wiki pages">&#128214; Wiki</button>
   <button id="vaultbtn" class="appbtn" title="Encrypted secrets vault">&#128274; Vault</button>
+  <button id="vcsbtn" class="appbtn" title="Pull requests, timeline &amp; snapshot diffs">&#128256; Project</button>
+  <button id="kqbtn" class="appbtn" title="Knowledge &amp; quality: context, IoT topology, crawler, code standard, security, tools, export">&#129504; Knowledge</button>
   <label class="mut" style="font-size:12px">Theme:
     <select id="themesel" title="Light / dark theme">
       <option value="light">Light</option>
@@ -338,6 +340,73 @@ input:focus-visible,select:focus-visible,textarea:focus-visible,.amsg .pbload:fo
         <button id="vscanbtn" class="appbtn">Scan for secrets</button>
         <div id="vscanout" class="mut" style="margin-top:6px"></div>
       </div>
+      <div class="vnet">
+        <div class="vneth">&#127760; Network registry</div>
+        <div class="mut">Per-project devices &amp; logins. Metadata lives in the project; an optional secret is
+          sealed in the vault, so adding or revealing a secret needs the vault unlocked. Open a project first.</div>
+        <div id="netlist" class="vlist"></div>
+        <div class="netadd">
+          <div class="vrow">
+            <input id="netlabel" placeholder="label (e.g. Main PLC)">
+            <input id="netaddr" placeholder="address (e.g. 192.168.1.50)">
+          </div>
+          <div class="vrow">
+            <input id="netuser" placeholder="username (optional)">
+            <input id="netsecret" type="password" placeholder="secret (unlock the vault to add one)" disabled>
+          </div>
+          <input id="netnotes" placeholder="notes (optional)">
+          <button id="netsave" class="appbtn">Add network entry</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="vcs" class="vmodal">
+  <div class="vbox" style="width:640px">
+    <div class="vh">&#128256; Project &mdash; PRs, timeline &amp; diffs <span class="x" onclick="closeVcs()">&#10005;</span></div>
+    <div class="vb">
+      <div class="mut">Pull requests, change timeline and snapshot diffs for the open project. Open a project first.</div>
+      <div id="vcspr" class="amem">
+        <div class="amemh" id="prtoggle"><span class="amemchev">&#9656;</span> Pull requests
+          <span id="prcount" class="amemcount"></span></div>
+        <div class="amembody" id="prbody" style="display:none">
+          <div id="prpane"></div>
+        </div>
+      </div>
+      <div id="vcstl" class="amem">
+        <div class="amemh" id="tltoggle"><span class="amemchev">&#9656;</span> Timeline
+          <span id="tlcount" class="amemcount"></span></div>
+        <div class="amembody" id="tlbody" style="display:none">
+          <div id="tllist" class="amemlist"></div>
+          <div class="amemadd">
+            <div class="amemrow">
+              <select id="tlkind" title="Event kind">
+                <option value="note">note</option>
+                <option value="change">change</option>
+                <option value="decision">decision</option>
+                <option value="snapshot">snapshot</option>
+              </select>
+              <input id="tlsummary" placeholder="summary (e.g. Switched pump to status address)">
+            </div>
+            <textarea id="tldetail" rows="2" placeholder="detail (optional)"></textarea>
+            <button type="button" id="tladd">Add event</button>
+          </div>
+        </div>
+      </div>
+      <div id="vcsdiff" class="amem">
+        <div class="amemh" id="difftoggle"><span class="amemchev">&#9656;</span> Snapshot diff</div>
+        <div class="amembody" id="diffbody" style="display:none">
+          <div class="amemnote">Compare two snapshots of this project &mdash; which nodes were added, removed, or had fields change.</div>
+          <div class="diffpick">
+            <select id="difffrom"><option value="">- snapshot -</option></select>
+            <span class="arr">&#8594;</span>
+            <select id="diffto"><option value="">- snapshot -</option></select>
+            <button type="button" id="diffcompare" class="appbtn">Compare</button>
+          </div>
+          <div id="diffout" class="diffout"></div>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -361,6 +430,105 @@ input:focus-visible,select:focus-visible,textarea:focus-visible,.amsg .pbload:fo
       <div class="wrow">
         <button type="button" id="wikisave" class="wbtn">Save page</button>
         <span id="wikistatus" class="wmut"></span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="kq" class="vmodal">
+  <div class="vbox" style="width:680px">
+    <div class="vh">&#129504; Knowledge &amp; quality <span class="x" onclick="closeKq()">&#10005;</span></div>
+    <div class="vb">
+      <div class="mut">Project context gaps, Milesight IoT topology, the knowledge crawler, the code standard &amp; self-audit,
+        a security scan with the enterprise gate, tool recommendations, and wiki export. Sections that read project
+        data need an open project. Everything here is read-only toward bOS.</div>
+
+      <div id="kqsug" class="amem">
+        <div class="amemh" id="ksugtoggle"><span class="amemchev">&#9656;</span> Context suggestions
+          <span id="ksugcount" class="amemcount"></span></div>
+        <div class="amembody" id="ksugbody" style="display:none">
+          <div class="amemnote">What the co-pilot is missing for this project &mdash; a live snapshot, more datasheets,
+            documentation for terms in your question. Heuristic &amp; deterministic.</div>
+          <div class="amemrow">
+            <input id="ksugq" placeholder="optional: the question you're about to ask">
+            <button type="button" id="ksugrun" class="appbtn">Suggest</button>
+          </div>
+          <div id="ksuglist" class="amemlist" style="margin-top:8px"></div>
+        </div>
+      </div>
+
+      <div id="kqms" class="amem">
+        <div class="amemh" id="mstoggle"><span class="amemchev">&#9656;</span> Milesight import</div>
+        <div class="amembody" id="msbody" style="display:none">
+          <div class="amemnote">Pick a Milesight gateway config export (JSON) &mdash; it's parsed into a read-only IoT
+            topology: the gateway, its LoRa settings, and the attached end-devices. Nothing is written.</div>
+          <button type="button" id="msimport" class="appbtn">Pick gateway export&hellip;</button>
+          <div id="mstopo" style="margin-top:8px"></div>
+        </div>
+      </div>
+
+      <div id="kqcrawl" class="amem">
+        <div class="amemh" id="crawltoggle"><span class="amemchev">&#9656;</span> Knowledge crawler
+          <span id="crawlcount" class="amemcount"></span></div>
+        <div class="amembody" id="crawlbody" style="display:none">
+          <div class="amemnote">Cache a documentation page per project, then run the deterministic &laquo;eureka&raquo;
+            finder to surface terms the crawled pages mention that aren't in your loaded context. Open a project first.</div>
+          <div class="amemrow">
+            <input id="crawlurl" placeholder="https://wiki.comfortclick.com/&hellip;">
+            <button type="button" id="crawladd" class="appbtn">Crawl URL</button>
+          </div>
+          <div id="crawlstatus" class="mut" style="font-size:11px;margin:4px 0"></div>
+          <div id="crawllist" class="amemlist"></div>
+          <button type="button" id="crawleurekabtn" class="appbtn" style="margin-top:6px">Find eureka links</button>
+          <div id="crawleureka" style="margin-top:8px"></div>
+        </div>
+      </div>
+
+      <div id="kqcode" class="amem">
+        <div class="amemh" id="codetoggle"><span class="amemchev">&#9656;</span> Code standard &amp; audit</div>
+        <div class="amembody" id="codebody" style="display:none">
+          <div class="amemnote">The Hyperion code standard and a self-audit of its own sources &mdash; each deviation
+            lists the file, line, and the suggested fix.</div>
+          <button type="button" id="coderun" class="appbtn">Show standard &amp; run audit</button>
+          <div id="codeout" style="margin-top:8px"></div>
+        </div>
+      </div>
+
+      <div id="kqsec" class="amem">
+        <div class="amemh" id="sectoggle"><span class="amemchev">&#9656;</span> Security &amp; enterprise gate</div>
+        <div class="amembody" id="secbody" style="display:none">
+          <div class="amemnote">A source-level security scan plus the enterprise-readiness gate (encrypted vault, SSO,
+            CI, tests, no plaintext secrets) with a per-item checklist of what to fix.</div>
+          <div class="amemrow">
+            <button type="button" id="secrun" class="appbtn">Run security scan</button>
+            <button type="button" id="gaterun" class="appbtn">Check enterprise gate</button>
+          </div>
+          <div id="secout" style="margin-top:8px"></div>
+          <div id="gateout" style="margin-top:8px"></div>
+        </div>
+      </div>
+
+      <div id="kqrec" class="amem">
+        <div class="amemh" id="rectoggle"><span class="amemchev">&#9656;</span> Tool recommendations</div>
+        <div class="amembody" id="recbody" style="display:none">
+          <div class="amemnote">Context-aware MCP servers &amp; ECC skills from the deterministic recommender &mdash;
+            driven by whether a .bos is open, the kinds of loaded context files, and your query. Purely advisory.</div>
+          <div class="amemrow">
+            <input id="recq" placeholder="optional: what you're trying to do">
+            <button type="button" id="recrun" class="appbtn">Recommend</button>
+          </div>
+          <div id="reclist" class="amemlist" style="margin-top:8px"></div>
+        </div>
+      </div>
+
+      <div id="kqwikiexp" class="amem">
+        <div class="amemh" id="wikiexptoggle"><span class="amemchev">&#9656;</span> Export wiki</div>
+        <div class="amembody" id="wikiexpbody" style="display:none">
+          <div class="amemnote">Export the bundled wiki to a folder you choose as a small static site (an index plus a
+            page per entry).</div>
+          <button type="button" id="wikiexpbtn" class="appbtn">Export to folder&hellip;</button>
+          <div id="wikiexpout" style="margin-top:8px"></div>
+        </div>
       </div>
     </div>
   </div>

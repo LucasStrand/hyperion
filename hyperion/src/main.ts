@@ -60,6 +60,43 @@ const api = {
   wikiList: () => invoke("wiki_list"),
   wikiGet:  (slug) => invoke("wiki_get", { slug }),         // null when no such page
   wikiSave: (slug, title, html) => invoke("wiki_save", { slug, title, html }),
+
+  // project collaboration: pull requests + timeline + snapshot diff (src-tauri/src/collab.rs, lib.rs)
+  prList:       () => invoke("pr_list"),
+  prCreate:     (title, narrative, aiDocs) => invoke("pr_create", { title, narrative, aiDocs }),
+  prGet:        (id) => invoke("pr_get", { id }),            // null when no such PR
+  prCommentAdd: (prId, author, body) => invoke("pr_comment_add", { prId, author, body }),
+  prSetStatus:  (id, status) => invoke("pr_set_status", { id, status }), // open|merged|closed
+  prDelete:     (id) => invoke("pr_delete", { id }),
+  timelineList: (limit) => invoke("timeline_list", { limit }),
+  timelineAdd:  (kind, summary, detail) => invoke("timeline_add", { kind, summary, detail }),
+  snapshotDiff: (fromId, toId) => invoke("snapshot_diff", { fromId, toId }),
+
+  // vault-backed network registry (src-tauri/src/netreg.rs) — secrets sealed in the vault
+  netList:   () => invoke("net_list"),
+  netAdd:    (label, address, username, secret, notes) => invoke("net_add", { label, address, username, secret, notes }),
+  netGet:    (id) => invoke("net_get", { id }),             // reveals secret; vault must be unlocked
+  netDelete: (id) => invoke("net_delete", { id }),
+
+  // ----- Group B (knowledge / quality) -----
+  // missing-context suggestions for the open project (src-tauri/src/suggest.rs)
+  contextSuggest:  (query) => invoke("context_suggest", { query }),
+  // Milesight gateway config -> IoT topology (src-tauri/src/milesight.rs); no project needed
+  milesightImport: (path) => invoke("milesight_import", { path }),
+  // knowledge crawler: cache pages per project + deterministic "eureka" link finder (crawler.rs)
+  crawlAdd:    (url) => invoke("crawl_add", { url }),
+  crawlList:   () => invoke("crawl_list"),
+  crawlGet:    (id) => invoke("crawl_get", { id }),
+  crawlDelete: (id) => invoke("crawl_delete", { id }),
+  crawlEureka: () => invoke("crawl_eureka"),
+  // code standard + self-audit of Hyperion's own sources (src-tauri/src/standard.rs)
+  codeStandard: () => invoke("code_standard"),
+  codeAudit:    () => invoke("code_audit"),
+  // security scan + enterprise-readiness gate (src-tauri/src/security.rs)
+  securityScan:        () => invoke("security_scan"),
+  enterpriseGateCheck: () => invoke("enterprise_gate_check"),
+  // export the bundled wiki to a chosen folder (src-tauri/src/export.rs)
+  wikiExport: (dest) => invoke("wiki_export", { dest }),
 };
 
 const $ = (s) => document.querySelector(s), $$ = (s) => [...document.querySelectorAll(s)];
@@ -385,6 +422,7 @@ async function refreshAuth(){
 }
 function renderVaultStatus(st){
   const unlocked = !!(st && st.unlocked);
+  vUnlocked = unlocked;
   const el=$('#vstatus');
   el.className='vstat '+(unlocked?'unlocked':'locked');
   el.textContent = unlocked
@@ -400,6 +438,7 @@ async function refreshVault(){
   await refreshAuth();
   let st; try{ st=await api.vaultStatus(); }catch(e){ st={exists:false,unlocked:false,count:-1}; }
   renderVaultStatus(st);
+  await refreshNet();   // the net registry list shows regardless of lock (only secrets need unlock)
   const list=$('#vlist');
   if(!st.unlocked){ list.innerHTML='<div class="mut" style="padding:8px">Unlock to view secret names.</div>'; return; }
   let names=[]; try{ names=await api.vaultList(); }catch(e){ names=[]; }
@@ -430,6 +469,51 @@ async function scanGuard(){
       +' &mdash; store in the vault, not in plaintext:</span><br>'
       +hits.map(h=>esc(h.kind)+' <span class="mut">('+esc(h.detail)+')</span>').join('<br>')
     : '<span class="clean">&#10003; No obvious secrets found.</span>';
+}
+
+// ---------- vault-backed network registry (Group A; src-tauri/src/netreg.rs) ----------
+// Per-project devices/logins. Metadata is stored in the project db; an optional secret
+// is sealed into the vault (so adding/revealing a secret needs the vault unlocked). Lives
+// in the Vault modal because it shares the unlocked-vault precondition. Escape everything.
+let vUnlocked=false;   // mirrors the vault status so the net form can gate its secret field
+async function refreshNet(){
+  const list=$('#netlist'); let entries=[];
+  try{ entries=await api.netList(); }
+  catch(e){ list.innerHTML='<div class="mut" style="padding:8px">'+esc(''+e)+'</div>'; return; }
+  list.innerHTML = entries.length
+    ? entries.map(n=>'<div class="vi"><span>'+esc(n.label)+' <span class="mut">· '+esc(n.address)
+        +(n.username?(' · '+esc(n.username)):'')+'</span>'+(n.has_secret?' &#128274;':'')+'</span><span>'
+        +(n.has_secret?'<span class="rev" data-id="'+esc(n.id)+'">reveal</span>':'')
+        +'<span class="del" data-id="'+esc(n.id)+'">delete</span></span></div>').join('')
+    : '<div class="mut" style="padding:8px">No network entries yet. Add one below.</div>';
+  $$('#netlist .del').forEach(b=>b.onclick=async()=>{
+    if(!confirm('Delete this network entry?')) return;
+    try{ await api.netDelete(Number(b.dataset.id)); await refreshNet(); }catch(e){ alert('Delete failed: '+e); }});
+  $$('#netlist .rev').forEach(b=>b.onclick=async()=>{
+    try{ const n=await api.netGet(Number(b.dataset.id));
+      alert(n.label+'\naddress: '+(n.address||'')+'\nusername: '+(n.username||'')
+        +'\nsecret: '+(n.secret||'(none)')+(n.notes?('\nnotes: '+n.notes):'')); }
+    catch(e){ alert('Reveal failed: '+e); }});
+  // The secret field needs an unlocked vault; mirror renderVaultStatus' gating.
+  const sec=$('#netsecret');
+  if(sec){ sec.disabled=!vUnlocked; sec.placeholder = vUnlocked
+    ? 'secret (optional)' : 'secret (unlock the vault to add one)'; }
+}
+async function saveNet(){
+  const label=($('#netlabel').value||'').trim();
+  const address=($('#netaddr').value||'').trim();
+  if(!label){ alert('Give the entry a label (e.g. Main PLC).'); return; }
+  if(!address){ alert('Give the entry an address (e.g. 192.168.1.50).'); return; }
+  const username=($('#netuser').value||'').trim()||null;
+  const secret=($('#netsecret').value||'')||null;
+  const notes=($('#netnotes').value||'').trim()||null;
+  const b=$('#netsave'); b.disabled=true; b.textContent='Adding…';
+  try{
+    await api.netAdd(label,address,username,secret,notes);
+    $('#netlabel').value=''; $('#netaddr').value=''; $('#netuser').value=''; $('#netsecret').value=''; $('#netnotes').value='';
+    await refreshNet();
+  }catch(e){ alert('Add network entry failed: '+e); }
+  finally{ b.disabled=false; b.textContent='Add network entry'; }
 }
 
 // expose handlers referenced by inline onclick="" attributes
@@ -791,7 +875,385 @@ async function saveWikiPage(){
 function openWiki(){ $('#wiki').classList.add('on'); refreshWikiList(); }
 function closeWiki(){ $('#wiki').classList.remove('on'); }
 
-Object.assign(window, { navigate, gotoStep, closeGuide, showNode, showDiff, closeVault, closeAgent, closeWiki, loadPlaybookFromBlock });
+// ---------- project: PRs, timeline & snapshot diff (Group A; collab.rs + lib.rs) ----------
+// One modal (#vcs) with three collapsible sections, all scoped to the open project
+// (same "open a project first" contract as memory). Escape everything rendered.
+function openVcs(){ $('#vcs').classList.add('on'); refreshVcs(); }
+function closeVcs(){ $('#vcs').classList.remove('on'); }
+function refreshVcs(){ if(prOpen) refreshPrs(); if(tlOpen) refreshTimeline(); if(diffOpen) refreshDiffPickers(); }
+
+// ----- pull requests -----
+const PR_ST={open:['st-todo','open'],merged:['st-done','merged'],closed:['st-na','closed']};
+let prOpen=false, prDetail=null;   // prDetail = id of the PR shown in detail, or null for the list
+function togglePr(){
+  prOpen=!prOpen;
+  $('#vcspr').classList.toggle('open',prOpen);
+  $('#prbody').style.display=prOpen?'block':'none';
+  if(prOpen){ prDetail=null; refreshPrs(); }
+}
+async function refreshPrs(){
+  // Detail view takes over the pane when a PR is open.
+  if(prDetail!=null){ await renderPrDetail(prDetail); return; }
+  const pane=$('#prpane'); let prs=[];
+  try{ prs=await api.prList(); }catch(e){ pane.innerHTML='<div class="mut" style="font-size:12px;padding:4px 2px">'+esc(''+e)+'</div>'+prCreateForm(); wirePrCreate(); $('#prcount').textContent=''; return; }
+  $('#prcount').textContent = prs.length ? (prs.length+' PR'+(prs.length===1?'':'s')) : '';
+  const list = prs.length
+    ? prs.map(p=>{const [cls,lbl]=PR_ST[p.status]||PR_ST.open;
+        return '<div class="amemitem prrow" data-id="'+esc(p.id)+'"><div class="mtop">'
+          +'<span class="badge-st '+cls+'">'+lbl+'</span>'
+          +'<span class="mslug">'+esc(p.title)+'</span>'
+          +'<span class="prcmt mut">&#128172; '+esc(p.comments)+'</span></div>'
+          +'<div class="actxmeta mut">#'+esc(p.id)+' · '+esc(p.created_at)+'</div></div>';}).join('')
+    : '<div class="mut" style="font-size:12px;padding:4px 2px">No pull requests yet. Open one below.</div>';
+  pane.innerHTML='<div id="prlist" class="amemlist">'+list+'</div>'+prCreateForm();
+  $$('#prlist .prrow').forEach(r=>r.onclick=()=>{ prDetail=Number(r.dataset.id); refreshPrs(); });
+  wirePrCreate();
+}
+function prCreateForm(){
+  return '<div class="vcsform">'
+    +'<div class="vcsformh">New pull request</div>'
+    +'<input id="prtitle" placeholder="title">'
+    +'<textarea id="prnarr" rows="2" placeholder="narrative (human) — what & why"></textarea>'
+    +'<textarea id="prdocs" rows="2" placeholder="ai_docs (agent notes) — optional"></textarea>'
+    +'<button type="button" id="prcreate" class="appbtn">Create PR</button></div>';
+}
+function wirePrCreate(){ const b=$('#prcreate'); if(b) b.onclick=createPr; }
+async function createPr(){
+  const title=($('#prtitle').value||'').trim();
+  if(!title){ alert('Give the pull request a title.'); return; }
+  const narrative=($('#prnarr').value||'').trim()||null;
+  const aiDocs=($('#prdocs').value||'').trim()||null;
+  const b=$('#prcreate'); b.disabled=true; b.textContent='Creating…';
+  try{ await api.prCreate(title,narrative,aiDocs); await refreshPrs(); }
+  catch(e){ alert('Create PR failed: '+e); b.disabled=false; b.textContent='Create PR'; }
+}
+async function renderPrDetail(id){
+  const pane=$('#prpane'); let pr=null;
+  try{ pr=await api.prGet(id); }catch(e){ pane.innerHTML='<div class="mut">'+esc(''+e)+'</div>'; return; }
+  if(!pr){ prDetail=null; await refreshPrs(); return; }
+  const [cls,lbl]=PR_ST[pr.status]||PR_ST.open;
+  let h='<div class="prback reflink" id="prback">&#8592; All pull requests</div>';
+  h+='<div class="prdh"><span class="badge-st '+cls+'">'+lbl+'</span>'
+    +'<span class="prtitle">'+esc(pr.title)+'</span>'
+    +'<span class="mut" style="font-size:11px">#'+esc(pr.id)+' · '+esc(pr.created_at)+'</span></div>';
+  if(pr.narrative) h+='<div class="section"><div class="h">Narrative</div><div class="b prdoc">'+renderAnswer(pr.narrative)+'</div></div>';
+  if(pr.ai_docs)   h+='<div class="section"><div class="h">AI docs</div><div class="b prdoc">'+renderAnswer(pr.ai_docs)+'</div></div>';
+  const cmts=Array.isArray(pr.comments)?pr.comments:[];
+  h+='<div class="section"><div class="h">Comments ('+cmts.length+')</div><div class="b">';
+  h+= cmts.length
+    ? cmts.map(c=>'<div class="prcmtbubble"><div class="prcmth"><b>'+esc(c.author)+'</b> <span class="mut">'+esc(c.created_at)+'</span></div>'
+        +'<div class="prcmtbody">'+esc(c.body)+'</div></div>').join('')
+    : '<div class="mut" style="font-size:12px">No comments yet.</div>';
+  h+='</div></div>';
+  // Composer + status + delete.
+  h+='<div class="vcsform"><div class="vcsformh">Add comment</div>'
+    +'<input id="prcauthor" placeholder="your name">'
+    +'<textarea id="prcbody" rows="2" placeholder="comment…"></textarea>'
+    +'<button type="button" id="prcsend" class="appbtn">Add comment</button></div>';
+  h+='<div class="prdactions"><label class="mut" style="font-size:12px">Status: '
+    +'<select id="prstatus">'
+    + ['open','merged','closed'].map(s=>'<option value="'+s+'"'+(s===pr.status?' selected':'')+'>'+s+'</option>').join('')
+    +'</select></label>'
+    +'<button type="button" id="prdel" class="appbtn prdanger">Delete PR</button></div>';
+  pane.innerHTML=h;
+  $('#prback').onclick=()=>{ prDetail=null; refreshPrs(); };
+  $('#prcsend').onclick=async()=>{
+    const author=($('#prcauthor').value||'').trim(); const body=($('#prcbody').value||'').trim();
+    if(!author){ alert('Enter your name.'); return; }
+    if(!body){ alert('Write a comment.'); return; }
+    const b=$('#prcsend'); b.disabled=true; b.textContent='Sending…';
+    try{ await api.prCommentAdd(id,author,body); await renderPrDetail(id); }
+    catch(e){ alert('Add comment failed: '+e); b.disabled=false; b.textContent='Add comment'; }
+  };
+  $('#prstatus').onchange=async(e)=>{
+    try{ await api.prSetStatus(id,e.target.value); await renderPrDetail(id); }
+    catch(err){ alert('Set status failed: '+err); }
+  };
+  $('#prdel').onclick=async()=>{
+    if(!confirm('Delete this pull request and its comments?')) return;
+    try{ await api.prDelete(id); prDetail=null; await refreshPrs(); }
+    catch(e){ alert('Delete PR failed: '+e); }
+  };
+}
+
+// ----- timeline -----
+let tlOpen=false;
+function toggleTimeline(){
+  tlOpen=!tlOpen;
+  $('#vcstl').classList.toggle('open',tlOpen);
+  $('#tlbody').style.display=tlOpen?'block':'none';
+  if(tlOpen) refreshTimeline();
+}
+async function refreshTimeline(){
+  const list=$('#tllist'); let events=[];
+  try{ events=await api.timelineList(null); }catch(e){
+    list.innerHTML='<div class="mut" style="font-size:12px;padding:4px 2px">'+esc(''+e)+'</div>'; $('#tlcount').textContent=''; return; }
+  $('#tlcount').textContent = events.length ? (events.length+' event'+(events.length===1?'':'s')) : '';
+  list.innerHTML = events.length
+    ? events.map(ev=>'<div class="amemitem"><div class="mtop">'
+        +'<span class="amemtype">'+esc(ev.kind)+'</span>'
+        +'<span class="mslug">'+esc(ev.summary)+'</span></div>'
+        +(ev.detail?'<div class="mbody">'+esc(ev.detail)+'</div>':'')
+        +'<div class="actxmeta mut">'+esc(ev.created_at)+'</div></div>').join('')
+    : '<div class="mut" style="font-size:12px;padding:4px 2px">No timeline events yet. Add one below.</div>';
+}
+async function addTimeline(){
+  const kind=$('#tlkind').value;
+  const summary=($('#tlsummary').value||'').trim();
+  const detail=($('#tldetail').value||'').trim()||null;
+  if(!summary){ alert('Write a short summary for the event.'); return; }
+  const b=$('#tladd'); b.disabled=true; b.textContent='Adding…';
+  try{ await api.timelineAdd(kind,summary,detail); $('#tlsummary').value=''; $('#tldetail').value=''; await refreshTimeline(); }
+  catch(e){ alert('Add timeline event failed: '+e); }
+  finally{ b.disabled=false; b.textContent='Add event'; }
+}
+
+// ----- snapshot diff -----
+let diffOpen=false;
+function toggleDiff(){
+  diffOpen=!diffOpen;
+  $('#vcsdiff').classList.toggle('open',diffOpen);
+  $('#diffbody').style.display=diffOpen?'block':'none';
+  if(diffOpen) refreshDiffPickers();
+}
+function refreshDiffPickers(){
+  const opts='<option value="">- snapshot -</option>'
+    + projSnapshots.map(s=>'<option value="'+esc(s.id)+'">'+esc(s.label||('snapshot '+s.id))
+        +(s.created_at?(' · '+esc(s.created_at)):'')+'</option>').join('');
+  const from=$('#difffrom'), to=$('#diffto');
+  const kf=from.value, kt=to.value;
+  from.innerHTML=opts; to.innerHTML=opts;
+  if(kf) from.value=kf; if(kt) to.value=kt;
+  if(!projSnapshots.length)
+    $('#diffout').innerHTML='<div class="mut" style="font-size:12px;padding:4px 2px">This project has no snapshots yet — import a .bos first.</div>';
+}
+async function runSnapshotDiff(){
+  const from=$('#difffrom').value, to=$('#diffto').value;
+  if(!from||!to){ alert('Pick two snapshots to compare.'); return; }
+  if(from===to){ alert('Pick two different snapshots.'); return; }
+  const out=$('#diffout'); out.innerHTML='<div class="mut" style="font-size:12px;padding:4px 2px">Comparing…</div>';
+  let d;
+  try{ d=await api.snapshotDiff(Number(from),Number(to)); }
+  catch(e){ out.innerHTML='<div class="mut" style="font-size:12px;padding:4px 2px">'+esc(''+e)+'</div>'; return; }
+  const added=d.added||[], removed=d.removed||[], changed=d.changed||[];
+  if(!added.length && !removed.length && !changed.length){
+    out.innerHTML='<div class="mut" style="font-size:12px;padding:4px 2px">No differences between these two snapshots.</div>'; return; }
+  let h='';
+  const nodeRows=arr=>'<div class="cmdbox">'+arr.map(n=>'<div class="cmd '+(arr===added?'added':'removed')+'"><span class="t">'
+      +esc(n.path)+(n.type?(' <span class="mut">('+esc(n.type)+')</span>'):'')+'</span></div>').join('')+'</div>';
+  if(added.length)   h+='<div class="section"><div class="h">Added ('+added.length+')</div><div class="b">'+nodeRows(added)+'</div></div>';
+  if(removed.length) h+='<div class="section"><div class="h">Removed ('+removed.length+')</div><div class="b">'+nodeRows(removed)+'</div></div>';
+  if(changed.length){
+    h+='<div class="section"><div class="h">Changed ('+changed.length+')</div><div class="b">';
+    h+=changed.map(c=>'<div class="kv"><span><span class="reflink" onclick="navigate(this.dataset.p)" data-p="'+esc(c.path)+'">'
+        +esc(c.path)+'</span> <span class="mut">'+esc(c.field||'(node)')+'</span></span>'
+        +'<span class="ba"><s>'+esc(diffVal(c.before))+'</s><span class="arr">&#8594;</span><b>'+esc(diffVal(c.after))+'</b></span></div>').join('');
+    h+='</div></div>';
+  }
+  out.innerHTML=h;
+}
+function diffVal(v){ if(v===null||v===undefined) return '∅'; if(typeof v==='object') return JSON.stringify(v); return ''+v; }
+
+// ---------- Group B: knowledge & quality (#kq modal) ----------
+// One modal with collapsible sections, mirroring the #vcs Project modal exactly
+// (same .amem collapsibles, same "open a project first" contract where a command
+// needs the project DB). Every section is a thin wrapper over a real invoke() with
+// inline error handling. Read-only toward bOS. Escape everything rendered.
+function openKq(){ $('#kq').classList.add('on'); }
+function closeKq(){ $('#kq').classList.remove('on'); }
+// Shared collapsible-section toggler (id-driven, like togglePr/toggleTimeline).
+function kqToggle(secId, bodyId, fn){
+  const sec=$(secId); const open=!sec.classList.contains('open');
+  sec.classList.toggle('open',open);
+  $(bodyId).style.display=open?'block':'none';
+  if(open && fn) fn();
+}
+// Severity badge reusing the guide's badge-st palette (high=amber-red, medium=amber, low=grey).
+const SEV={high:['st-partial','high'],medium:['st-partial','medium'],low:['st-todo','low'],
+  critical:['st-partial','critical']};
+function sevBadge(sev){ const [cls,lbl]=SEV[sev]||['st-na',esc(sev||'note')];
+  return '<span class="badge-st '+cls+' sev-'+esc(sev||'na')+'">'+esc(lbl)+'</span>'; }
+function kqErr(out, e){ out.innerHTML='<div class="mut" style="font-size:12px;padding:4px 2px">'+esc(''+e)+'</div>'; }
+function kqBusy(out, msg){ out.innerHTML='<div class="mut" style="font-size:12px;padding:4px 2px">'+esc(msg)+'</div>'; }
+
+// ----- context suggestions (suggest.rs) -----
+async function runContextSuggest(){
+  const out=$('#ksuglist'); const q=($('#ksugq').value||'').trim()||null;
+  kqBusy(out,'Looking for gaps…');
+  let recs=[];
+  try{ recs=await api.contextSuggest(q); }catch(e){ kqErr(out,e); $('#ksugcount').textContent=''; return; }
+  $('#ksugcount').textContent = recs.length ? (recs.length+' suggestion'+(recs.length===1?'':'s')) : '';
+  if(!recs.length){ out.innerHTML='<div class="mut" style="font-size:12px;padding:4px 2px">No gaps found — the project context looks complete.</div>'; return; }
+  out.innerHTML=recs.map(r=>'<div class="amemitem"><div class="mtop">'
+    +sevBadge(r.severity)
+    +'<span class="amemtype">'+esc(r.kind)+'</span></div>'
+    +'<div class="mbody">'+esc(r.message)+'</div></div>').join('');
+}
+
+// ----- Milesight import -> IoT topology (milesight.rs) -----
+async function runMilesightImport(){
+  const out=$('#mstopo'); const btn=$('#msimport');
+  let path;
+  try{ path=await openFileDialog({ multiple:false, directory:false, title:'Pick a Milesight gateway export',
+        filters:[{ name:'Gateway config (JSON)', extensions:['json'] }] }); }
+  catch(e){ alert('Could not open the file picker: '+e); return; }
+  if(!path) return;
+  btn.disabled=true; btn.textContent='Parsing…';
+  kqBusy(out,'Parsing gateway export…');
+  let topo;
+  try{ topo=await api.milesightImport(path); }
+  catch(e){ kqErr(out,e); btn.disabled=false; btn.textContent='Pick gateway export…'; return; }
+  renderTopology(out, topo);
+  btn.disabled=false; btn.textContent='Pick gateway export…';
+}
+function topoKv(label, val){ return '<div class="kv"><b>'+esc(label)+'</b><span class="v">'
+  +(val===null||val===undefined||val===''?'<span class="mut">—</span>':esc(''+val))+'</span></div>'; }
+function renderTopology(out, t){
+  const g=t.gateway||{}, l=t.lora||{}, devs=Array.isArray(t.devices)?t.devices:[];
+  let h='<div class="section"><div class="h">Gateway</div><div class="b">'
+    +topoKv('Name',g.name)+topoKv('Model',g.model)+topoKv('EUI',g.eui)+topoKv('IP',g.ip)+'</div></div>';
+  h+='<div class="section"><div class="h">LoRa</div><div class="b">'
+    +topoKv('Region',l.region)+topoKv('Frequency',l.frequency)+'</div></div>';
+  h+='<div class="section"><div class="h">Devices ('+devs.length+')</div><div class="b">';
+  h+= devs.length
+    ? devs.map(d=>{const [ic,col]=icon(d.type||'');
+        return '<div class="kv"><span><span class="ic" style="color:'+(col||'#888')+'">'+ic+'</span> '
+          +esc(d.name||'(unnamed)')+(d.type?(' <span class="mut">'+esc(d.type)+'</span>'):'')+'</span>'
+          +'<span class="v mut">'+esc(d.dev_eui||'')+(d.last_seen?(' · '+esc(d.last_seen)):'')+'</span></div>';}).join('')
+    : '<div class="mut" style="font-size:12px">No end-devices found in the export.</div>';
+  h+='</div></div>';
+  out.innerHTML=h;
+}
+
+// ----- knowledge crawler (crawler.rs + projects.rs) -----
+async function refreshCrawl(){
+  const list=$('#crawllist'); let docs=[];
+  try{ docs=await api.crawlList(); }catch(e){ kqErr(list,e); $('#crawlcount').textContent=''; return; }
+  $('#crawlcount').textContent = docs.length ? (docs.length+' page'+(docs.length===1?'':'s')) : '';
+  list.innerHTML = docs.length
+    ? docs.map(d=>'<div class="amemitem"><div class="mtop">'
+        +'<span class="actxkind">'+esc(d.source||'web')+'</span>'
+        +'<span class="mslug">'+esc(d.title||d.url)+'</span>'
+        +'<span class="mdel" data-id="'+esc(d.id)+'">delete</span></div>'
+        +'<div class="actxmeta mut">'+esc(d.url)+' · '+fmtBytes(d.bytes)+' · '+esc(d.fetched_at)+'</div></div>').join('')
+    : '<div class="mut" style="font-size:12px;padding:4px 2px">No crawled pages yet. Add a URL above. Open a project first.</div>';
+  $$('#crawllist .mdel').forEach(b=>b.onclick=async()=>{
+    if(!confirm('Remove this crawled page?')) return;
+    try{ await api.crawlDelete(Number(b.dataset.id)); await refreshCrawl(); }
+    catch(e){ alert('Delete failed: '+e); }});
+}
+async function addCrawl(){
+  const inp=$('#crawlurl'); const url=(inp.value||'').trim();
+  if(!url){ alert('Enter a URL to crawl (e.g. https://wiki.comfortclick.com/...).'); return; }
+  const btn=$('#crawladd'); btn.disabled=true; btn.textContent='Crawling…';
+  try{
+    const r=await api.crawlAdd(url);
+    inp.value='';
+    await refreshCrawl();
+    $('#crawlstatus').textContent='Cached "'+(r.title||r.url)+'" ('+fmtBytes(r.bytes)+').';
+  }catch(e){ alert('Crawl failed: '+e); $('#crawlstatus').textContent=''; }
+  finally{ btn.disabled=false; btn.textContent='Crawl URL'; }
+}
+async function runEureka(){
+  const out=$('#crawleureka'); kqBusy(out,'Scanning crawled pages…');
+  let recs=[];
+  try{ recs=await api.crawlEureka(); }catch(e){ kqErr(out,e); return; }
+  if(!recs.length){ out.innerHTML='<div class="mut" style="font-size:12px;padding:4px 2px">No eureka links — crawled pages add nothing new beyond your loaded context.</div>'; return; }
+  out.innerHTML='<div class="section"><div class="h">Eureka — terms worth documenting ('+recs.length+')</div><div class="b">'
+    + recs.map(r=>'<div class="amemitem"><div class="mtop">'
+        +'<span class="amemtype">'+esc(r.term)+'</span>'
+        +'<span class="prcmt mut">weight '+esc(r.weight)+'</span></div>'
+        +'<div class="mbody">'+esc(r.message)+'</div>'
+        +'<div class="actxmeta mut">source: '+esc(r.source)+'</div></div>').join('')
+    +'</div></div>';
+}
+
+// ----- code standard + audit (standard.rs) -----
+async function runCodeAudit(){
+  const out=$('#codeout'); kqBusy(out,'Reading the standard & auditing sources…');
+  let std, findings;
+  try{ std=await api.codeStandard(); }catch(e){ kqErr(out,e); return; }
+  try{ findings=await api.codeAudit(); }catch(e){ kqErr(out,e); return; }
+  let h='<div class="section"><div class="h">'+esc(std.title||'Code standard')+'</div><div class="b">';
+  h+='<div class="mbody" style="margin-bottom:6px">'+esc(std.summary||'')+'</div>';
+  (std.rules||[]).forEach(r=>h+='<div class="amemitem"><div class="mtop">'
+    +sevBadge(r.severity)+'<span class="amemtype">'+esc(r.applies_to)+'</span>'
+    +'<span class="mslug">'+esc(r.title)+'</span></div>'
+    +'<div class="actxmeta mut">fix: '+esc(r.fix)+'</div></div>');
+  h+='</div></div>';
+  h+='<div class="section"><div class="h">Audit findings ('+findings.length+')</div><div class="b">';
+  h+= findings.length
+    ? findings.map(f=>'<div class="amemitem"><div class="mtop">'
+        +sevBadge(f.severity)+'<span class="amemtype">'+esc(f.rule)+'</span>'
+        +'<span class="mslug">'+esc(f.path)+':'+esc(f.line)+'</span></div>'
+        +'<div class="mbody">'+esc(f.message)+'</div>'
+        +'<div class="actxmeta mut">suggested fix: '+esc(f.suggested_fix)+'</div></div>').join('')
+    : '<div class="mut" style="font-size:12px">No deviations — sources are clean against the standard.</div>';
+  h+='</div></div>';
+  out.innerHTML=h;
+}
+
+// ----- security scan + enterprise gate (security.rs) -----
+async function runSecurityScan(){
+  const out=$('#secout'); kqBusy(out,'Scanning sources for risky patterns…');
+  let findings;
+  try{ findings=await api.securityScan(); }catch(e){ kqErr(out,e); return; }
+  out.innerHTML='<div class="section"><div class="h">Security findings ('+findings.length+')</div><div class="b">'
+    + (findings.length
+        ? findings.map(f=>'<div class="amemitem"><div class="mtop">'
+            +sevBadge(f.severity)+'<span class="amemtype">'+esc(f.kind)+'</span>'
+            +'<span class="mslug">'+esc(f.path)+':'+esc(f.line)+'</span></div>'
+            +'<div class="mbody">'+esc(f.message)+'</div></div>').join('')
+        : '<div class="chkitem chk-ok">&#10003; No risky patterns found in the sources.</div>')
+    +'</div></div>';
+}
+async function runGateCheck(){
+  const out=$('#gateout'); kqBusy(out,'Evaluating enterprise-readiness gate…');
+  let res;
+  try{ res=await api.enterpriseGateCheck(); }catch(e){ kqErr(out,e); return; }
+  const items=Array.isArray(res.items)?res.items:[];
+  let h='<div class="section"><div class="h">Enterprise gate '
+    +'<span class="badge-st '+(res.passed?'st-done':'st-todo')+'">'+(res.passed?'✓ passed':'○ not yet')+'</span>'
+    +'</div><div class="b">';
+  h+= items.map(it=>'<div class="amemitem"><div class="mtop">'
+      +'<span class="chk'+(it.ok?'-ok':'-no')+'" style="font-weight:700">'+(it.ok?'&#10003;':'&#10007;')+'</span>'
+      +'<span class="mslug">'+esc(it.name)+'</span></div>'
+      +'<div class="mbody">'+esc(it.detail)+'</div></div>').join('');
+  h+='</div></div>';
+  out.innerHTML=h;
+}
+
+// ----- tool recommendations (tooling.rs; same recommender as the dock chips) -----
+async function runRecommend(){
+  const out=$('#reclist'); const q=($('#recq').value||'').trim()||null;
+  kqBusy(out,'Matching tools to your context…');
+  let recs=[];
+  try{ recs=await api.recommendTools(q); }catch(e){ kqErr(out,e); return; }
+  if(!recs.length){ out.innerHTML='<div class="mut" style="font-size:12px;padding:4px 2px">No recommendations for the current context.</div>'; return; }
+  out.innerHTML=recs.map(r=>'<div class="amemitem"><div class="mtop">'
+    +'<span class="actxkind '+esc(r.kind)+'">'+esc(r.kind)+'</span>'
+    +'<span class="mslug">'+esc(r.name)+'</span></div>'
+    +'<div class="mbody">'+esc(r.reason)+'</div></div>').join('');
+}
+
+// ----- wiki export to a chosen folder (export.rs) -----
+async function runWikiExport(){
+  const out=$('#wikiexpout'); const btn=$('#wikiexpbtn');
+  let dest;
+  try{ dest=await openFileDialog({ directory:true, multiple:false, title:'Export wiki to folder' }); }
+  catch(e){ alert('Could not open the folder picker: '+e); return; }
+  if(!dest) return;
+  btn.disabled=true; btn.textContent='Exporting…';
+  kqBusy(out,'Writing wiki site…');
+  try{
+    const r=await api.wikiExport(dest);
+    out.innerHTML='<div class="chkitem chk-ok" style="font-size:12px;padding:4px 2px">&#10003; Exported '
+      +esc(r.written)+' file'+(r.written===1?'':'s')+'. Index: <code>'+esc(r.index_path)+'</code></div>';
+  }catch(e){ kqErr(out,e); }
+  finally{ btn.disabled=false; btn.textContent='Export to folder…'; }
+}
+
+Object.assign(window, { navigate, gotoStep, closeGuide, showNode, showDiff, closeVault, closeAgent, closeWiki, closeVcs, closeKq, loadPlaybookFromBlock });
 
 // ---------- config render (state + tree); reused after a project/snapshot change ----------
 async function renderConfig(){
@@ -806,6 +1268,7 @@ async function renderConfig(){
 
 // ---------- project bar (SQLite store: list / create / open / import .bos) ----------
 let activeProject=null;  // {id,name,path} or null
+let projSnapshots=[];    // [{id,label,bos_filename,created_at,node_count}] for the snapshot-diff pickers
 function setImportEnabled(){ $('#projimport').disabled = !activeProject; }
 
 async function loadProjects(selectId){
@@ -818,8 +1281,10 @@ async function loadProjects(selectId){
 
 function applyProjectView(view){
   activeProject = (view && view.active) ? view.active : null;
+  projSnapshots = (view && Array.isArray(view.snapshots)) ? view.snapshots : [];
   if(activeProject) $('#projsel').value=activeProject.id;
   setImportEnabled();
+  if($('#vcs') && $('#vcs').classList.contains('on')) refreshVcs();
 }
 
 async function openProjectById(id){
@@ -886,7 +1351,17 @@ async function init(){
   $('#vlock').onclick=async()=>{ try{ await api.vaultLock(); await refreshVault(); }catch(e){ alert(e); } };
   $('#vsave').onclick=saveSecret;
   $('#vscanbtn').onclick=scanGuard;
+  $('#netsave').onclick=saveNet;
   $('#vault').addEventListener('click',e=>{ if(e.target.id==='vault') closeVault(); });
+
+  // project: PRs, timeline & snapshot diff (Group A)
+  $('#vcsbtn').onclick=openVcs;
+  $('#prtoggle').onclick=togglePr;
+  $('#tltoggle').onclick=toggleTimeline;
+  $('#difftoggle').onclick=toggleDiff;
+  $('#tladd').onclick=addTimeline;
+  $('#diffcompare').onclick=runSnapshotDiff;
+  $('#vcs').addEventListener('click',e=>{ if(e.target.id==='vcs') closeVcs(); });
 
   // wiki editor
   $('#wikibtn').onclick=openWiki;
@@ -911,6 +1386,28 @@ async function init(){
   // context files (collapsible)
   $('#actxtoggle').onclick=toggleCtx;
   $('#actxadd').onclick=addContextFile;
+
+  // knowledge & quality modal (Group B)
+  $('#kqbtn').onclick=openKq;
+  $('#kq').addEventListener('click',e=>{ if(e.target.id==='kq') closeKq(); });
+  $('#ksugtoggle').onclick=()=>kqToggle('#kqsug','#ksugbody',runContextSuggest);
+  $('#ksugrun').onclick=runContextSuggest;
+  $('#mstoggle').onclick=()=>kqToggle('#kqms','#msbody',null);
+  $('#msimport').onclick=runMilesightImport;
+  $('#crawltoggle').onclick=()=>kqToggle('#kqcrawl','#crawlbody',refreshCrawl);
+  $('#crawladd').onclick=addCrawl;
+  $('#crawlurl').addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); addCrawl(); }});
+  $('#crawleurekabtn').onclick=runEureka;
+  $('#codetoggle').onclick=()=>kqToggle('#kqcode','#codebody',null);
+  $('#coderun').onclick=runCodeAudit;
+  $('#sectoggle').onclick=()=>kqToggle('#kqsec','#secbody',null);
+  $('#secrun').onclick=runSecurityScan;
+  $('#gaterun').onclick=runGateCheck;
+  $('#rectoggle').onclick=()=>kqToggle('#kqrec','#recbody',runRecommend);
+  $('#recrun').onclick=runRecommend;
+  $('#wikiexptoggle').onclick=()=>kqToggle('#kqwikiexp','#wikiexpbody',null);
+  $('#wikiexpbtn').onclick=runWikiExport;
+
   refreshAgentStatus();
   refreshRoster();
 }
