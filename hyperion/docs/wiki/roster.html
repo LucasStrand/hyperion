@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Roster · Hyperion Wiki</title>
+<!-- Feature doc: Phase 2 multi-agent roster + versioned instincts + share protocol (M5). Themeable via :root tokens (M4). -->
+<style>
+  :root{
+    --bg:#f4f6f8; --pan:#ffffff; --ink:#1f2a36; --mut:#67788a; --line:#dce3ea;
+    --acc:#2b6cb0; --acc-soft:#e8f1fb; --ok:#2e9e6a; --warn:#b3261e; --soon:#d98014;
+    --code:#0b3d2e; --codebg:#eef4f1; --radius:10px;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --mono:Consolas,ui-monospace,"SFMono-Regular",monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.6}
+  .wrap{max-width:880px;margin:0 auto;padding:36px 22px 80px}
+  a{color:var(--acc)}
+  .crumb{font-size:13px;color:var(--mut);margin-bottom:8px}
+  .kicker{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--acc);font-weight:600}
+  h1{font-size:30px;margin:.16em 0 .12em}
+  .lede{font-size:17px;color:var(--mut);max-width:64ch}
+  h2{font-size:15px;letter-spacing:.04em;text-transform:uppercase;color:var(--mut);
+     margin:34px 0 10px;border-bottom:1px solid var(--line);padding-bottom:6px}
+  h3{margin:18px 0 4px;font-size:16px}
+  p,li{font-size:14.5px}
+  code{font-family:var(--mono);background:var(--codebg);color:var(--code);padding:1px 5px;border-radius:4px;font-size:13px}
+  pre{background:#11202b;color:#d6e2ec;padding:12px 14px;border-radius:var(--radius);overflow:auto;font-family:var(--mono);font-size:12.5px;line-height:1.5}
+  .pill{display:inline-block;font-size:11px;font-weight:600;border-radius:999px;padding:2px 9px}
+  .pill.done{background:#eaf7f0;color:var(--ok)} .pill.soon{background:#fdf3e6;color:var(--soon)}
+  table{border-collapse:collapse;width:100%;margin:10px 0;font-size:13.5px}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:var(--acc-soft);font-weight:600}
+  td code{white-space:nowrap}
+  .note{background:var(--acc-soft);border-left:3px solid var(--acc);border-radius:0 6px 6px 0;padding:10px 14px;margin:14px 0}
+  .warn{background:#fdecea;border-left:3px solid var(--warn);border-radius:0 6px 6px 0;padding:10px 14px;margin:14px 0}
+  .flow{font-family:var(--mono);font-size:12.5px;background:var(--pan);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;white-space:pre;overflow:auto}
+  .foot{margin-top:44px;border-top:1px solid var(--line);padding-top:14px;color:var(--mut);font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="crumb"><a href="index.html">&larr; Hyperion Wiki</a> / Agent Roster</div>
+  <div class="kicker">Phase 2 · milestone M5 · many experts, one co-pilot</div>
+  <h1>Agent Roster <span class="pill done">Built</span></h1>
+  <p class="lede">The co-pilot isn't one monolith &mdash; it's a roster of role-specialized agents.
+    A built-in router sends each question to the right expert (a Coordinator steps in for general or
+    unmatched questions); every expert carries its own standing instincts, and an explicit
+    <em>share protocol</em> says when to hand work to a colleague.</p>
+
+  <h2>Why a roster</h2>
+  <p>Building a bOS system spans very different skills: wiring Modbus/KNX objects in the
+    <a href="agent.html">Configurator</a>, tuning schedules and trends in the Service, designing a
+    client UI that delights a customer, hunting documentation, enforcing standards, and keeping
+    secrets safe. One generic prompt does all of them adequately and none of them well. A roster lets
+    each answer come from an agent whose instincts are tuned for that exact job &mdash; while a single
+    Coordinator keeps the experience seamless: you just ask, and the right specialist replies.</p>
+
+  <h2>The roster</h2>
+  <table>
+    <tr><th>Agent</th><th>What it owns</th><th>Hands off to&hellip;</th></tr>
+    <tr><td><b>Coordinator</b></td><td>Routes each ask; answers general / cross-cutting questions. The default and the fallback.</td><td>anyone</td></tr>
+    <tr><td><b>Configurator-Expert</b></td><td>Objects, programs, Modbus/KNX/LoRa mapping, runnable playbooks.</td><td>Service · Client/Design · Security · Doc-Writer</td></tr>
+    <tr><td><b>Service-Expert</b></td><td>Schedules, trends, drivers, logs, backups, licensing, local bOS servers.</td><td>Configurator · Security · Doc-Writer</td></tr>
+    <tr><td><b>Client/Design-Expert</b></td><td>The bOS Client: visualization, theming, layout, design taste.</td><td>Configurator · Doc-Writer</td></tr>
+    <tr><td><b>Crawler</b> <span class="pill soon">grows in M7</span></td><td>Official docs/knowledgebase + forum knowledge, with provenance.</td><td>Doc-Writer · Configurator</td></tr>
+    <tr><td><b>Standards/Reviewer</b></td><td>Reviews configs/code against the project's standards.</td><td>Security · Configurator</td></tr>
+    <tr><td><b>Doc-Writer</b></td><td>Wiki artifacts &amp; documentation, in the right shape for the information.</td><td>Client/Design · Standards/Reviewer</td></tr>
+    <tr><td><b>Security</b></td><td>Secrets hygiene, the vault, plaintext-password detection, the pre-PR gate.</td><td>Standards</td></tr>
+  </table>
+
+  <h2>How routing works</h2>
+  <p>Pick an agent from the <em>who answers</em> dropdown in the chat dock, or leave it on
+    <code>Auto</code> and the router picks the specialist for you (the Coordinator handles anything
+    unmatched). Routing is <b>deterministic and offline</b> &mdash;
+    no model call, so it's instant, free, and unit-tested. Each specialist is scored by whole-word
+    keyword hits in your question (a focused node's <em>type</em> adds a nudge by substring, so selecting
+    a <code>ModbusRegister</code> tips an ambiguous question toward the Configurator-Expert). The
+    highest scorer wins; ties break by roster order; if nothing scores, the Coordinator takes it.</p>
+  <div class="flow">ask + (focused node type)
+        │
+        ▼
+   route()  ──score specialists by keyword/type──►  best match
+        │                                              │
+   nothing scores                                      ▼
+        │                                     Configurator-Expert (e.g.)
+        ▼                                              │
+   Coordinator ◄─────────────────────────────  answer + suggested handoffs</div>
+  <p>Every answer is labelled with the agent that produced it and whether the Coordinator auto-routed
+    it, plus chips for any <em>handoffs</em> the share protocol suggests &mdash; e.g. a Configurator
+    question that mentions a plaintext password surfaces a <b>Security</b> chip.</p>
+
+  <h2>The share protocol</h2>
+  <p>Each agent declares a small set of handoff rules: <em>when keyword X appears, this is really
+    Y's job.</em> It's data, not guesswork &mdash; every handoff target is a real roster member (checked
+    by a test), and the suggestions are shown alongside the answer so you can re-ask the right expert.
+    This keeps each agent honest about the edges of its competence instead of bluffing past them.</p>
+
+  <h2>Instincts &mdash; versioned &amp; yours to shape</h2>
+  <p>Every agent ships with built-in <b>instincts</b>: a short block of standing heuristics injected
+    into its system prompt (the Configurator-Expert always cites real node paths and emits a runnable
+    <code>playbook</code>; the Security agent leads with the security reflex; and so on). You can refine
+    any agent's instincts per project in the <em>Agents &amp; instincts</em> panel.</p>
+  <ul>
+    <li><b>Append-only history.</b> Each save is a new version. Nothing is overwritten.</li>
+    <li><b>Non-destructive revert.</b> &ldquo;Revert to <em>v2</em>&rdquo; (or to the built-in default)
+      copies that body <em>forward</em> as a new version &mdash; your later edits are never lost.</li>
+    <li><b>Guarded on write.</b> Bodies are length-capped (8&nbsp;KB) and scanned for plaintext secrets;
+      a pasted key is refused and pointed at the <a href="vault.html">Vault</a>.</li>
+    <li><b>Trusted, but bounded.</b> Custom instincts are <em>your</em> configuration, so they sit in the
+      trusted-instructions region of the prompt &mdash; framed as refinements that <b>never override</b>
+      the standing security-reflex and read-only rules.</li>
+  </ul>
+  <div class="note">Instincts and history are stored per project in the SQLite <code>agent_instincts</code>
+    table (one row per <code>(agent_id, version)</code>). Version&nbsp;0 is the built-in baseline and lives in
+    the binary, not the database, so a fresh project starts from sensible defaults with zero rows.</div>
+
+  <h2>Commands</h2>
+  <table>
+    <tr><th>Command</th><th>Does</th></tr>
+    <tr><td><code>agent_roster</code></td><td>The whole roster (+ per-agent customized flag &amp; active version when a project is open).</td></tr>
+    <tr><td><code>agent_ask</code></td><td>Ask, optionally pinned to an <code>agent_id</code> (else auto-routed). Returns the answer, the chosen agent, and suggested handoffs.</td></tr>
+    <tr><td><code>agent_instincts_get</code></td><td>Resolved instincts for an agent (custom version or built-in baseline).</td></tr>
+    <tr><td><code>agent_instincts_set</code></td><td>Save a new instinct version (validated + secret-scanned).</td></tr>
+    <tr><td><code>agent_instincts_history</code></td><td>Newest-first version history.</td></tr>
+    <tr><td><code>agent_instincts_revert</code></td><td>Copy an earlier version (or the built-in default) forward as a new version.</td></tr>
+  </table>
+
+  <h2>Security posture</h2>
+  <p>The roster changes <em>who</em> answers, never <em>what the app may do</em>. Every agent stays
+    strictly <b>read-only</b> toward bOS. Routing on an untrusted node type only ever selects a benign,
+    trusted agent &mdash; it can inject nothing. Custom instincts can refine tone and focus but cannot
+    disable the standing security-reflex or read-only guarantees, and the untrusted <code>.bos</code>
+    grounding stays fenced and entity-encoded exactly as before. Secrets remain only in the encrypted
+    <a href="vault.html">Vault</a>.</p>
+
+  <div class="foot">Hyperion · Phase 2 (M5) complete · the co-pilot is read-only toward bOS and keeps
+    secrets in the vault. See also <a href="agent.html">The Agent</a> · <a href="memory.html">Project Memory</a> ·
+    <a href="plan.html">Plan dashboard</a>.</div>
+</div>
+</body></html>

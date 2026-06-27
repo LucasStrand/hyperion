@@ -304,9 +304,99 @@ pub fn scan_for_secrets(text: &str) -> Vec<Value> {
     out
 }
 
+/// The high-confidence secret *kinds* from `scan_for_secrets` that a write path
+/// (project memory, agent instincts) must reject outright. The looser
+/// `credential_assignment` heuristic is intentionally excluded — it false-positives
+/// on ordinary notes like "token bucket: …" — so write guards key off this set only.
+pub const HIGH_CONFIDENCE_SECRET_KINDS: [&str; 3] =
+    ["private_key", "aws_access_key", "bearer_token"];
+
+/// Does a single whitespace token look like a bare API key by a *known vendor
+/// prefix* (OpenAI/OpenRouter/Anthropic/GitHub/Slack)? This catches a key that is
+/// pasted on its own — notably the app's own `sk-or-…` OpenRouter keys — without a
+/// surrounding `Bearer`/`Authorization:` marker that `scan_for_secrets` keys off.
+/// Deliberately prefix-only: the looser opaque-entropy heuristic (used for redacting
+/// log output) would reject UUIDs and long device IDs an integrator legitimately
+/// records, so it is *not* used as a write-rejection rule.
+pub fn token_looks_like_secret(token: &str) -> bool {
+    // Strip surrounding quotes, brackets, and Markdown emphasis/code punctuation so a
+    // key pasted as `sk-or-…`, **sk-…**, or "sk-…", is still unwrapped and matched.
+    let t = token.trim_matches(|c: char| {
+        matches!(
+            c,
+            '"' | '\''
+                | ','
+                | ';'
+                | ':'
+                | '('
+                | ')'
+                | '['
+                | ']'
+                | '{'
+                | '}'
+                | '<'
+                | '>'
+                | '`'
+                | '*'
+                | '_'
+                | '~'
+                | '|'
+                | '!'
+                | '#'
+        )
+    });
+    if t.len() < 12 {
+        return false;
+    }
+    let lower = t.to_ascii_lowercase();
+    const PREFIXES: [&str; 6] = ["sk-", "sk-or-", "sk-ant-", "ghp_", "github_pat_", "xoxb-"];
+    PREFIXES.iter().any(|p| lower.starts_with(p))
+}
+
+/// True if `body` contains a plaintext credential that must never be stored where it
+/// will be spliced into a model prompt (project memory, agent instincts). Combines
+/// the structural scan (PEM key / AWS key / `Bearer`-marked token) with the
+/// vendor-prefix token check above, so a bare `sk-or-…` key is caught either way.
+/// Single source of truth shared by `projects::memory_set` and `roster::validate_body`.
+pub fn body_has_plaintext_secret(body: &str) -> bool {
+    let structural = scan_for_secrets(body).iter().any(|f| {
+        f.get("kind")
+            .and_then(|k| k.as_str())
+            .is_some_and(|k| HIGH_CONFIDENCE_SECRET_KINDS.contains(&k))
+    });
+    structural || body.split_whitespace().any(token_looks_like_secret)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn body_secret_catches_bare_vendor_keys_but_not_uuids() {
+        // The app's own OpenRouter key shape — bare, no Bearer marker — is caught.
+        assert!(body_has_plaintext_secret(
+            "use this key sk-or-v1-abc123def456ghi789jkl012mno345"
+        ));
+        assert!(body_has_plaintext_secret(
+            "token ghp_ABCDEFghijkl0123456789MNOPqrstuvWX"
+        ));
+        // A key wrapped in Markdown backticks/bold is still unwrapped and caught.
+        assert!(body_has_plaintext_secret(
+            "the key is `sk-or-v1-abc123def456ghi789jkl012`"
+        ));
+        assert!(body_has_plaintext_secret(
+            "**sk-ant-api03-abc123def456ghi789jkl012mno**"
+        ));
+        // A PEM block is still caught structurally.
+        assert!(body_has_plaintext_secret(
+            "-----BEGIN RSA PRIVATE KEY-----\nMIIabc\n-----END RSA PRIVATE KEY-----"
+        ));
+        // Ordinary operator notes — including a UUID/device id — are NOT flagged.
+        assert!(!body_has_plaintext_secret("Main pump is Modbus slave 3."));
+        assert!(!body_has_plaintext_secret(
+            "Device id 550e8400-e29b-41d4-a716-446655440000 sits in zone 1.1"
+        ));
+    }
 
     #[test]
     fn aes_gcm_round_trip() {

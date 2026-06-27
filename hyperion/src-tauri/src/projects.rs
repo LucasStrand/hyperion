@@ -98,6 +98,19 @@ fn init_db(conn: &Connection, name: &str) -> rusqlite::Result<()> {
          -- table was never populated before M5, so there can be no duplicate slugs
          -- to violate it. Enables the atomic ON CONFLICT(slug) upsert in memory_set.
          CREATE UNIQUE INDEX IF NOT EXISTS memory_slug_uq ON memory(slug);
+         -- Versioned, append-only per-agent instinct overrides (M5). One row per
+         -- (agent_id, version); the built-in role instincts are the version-0
+         -- baseline (in-binary, not stored), and each operator save appends a new
+         -- version. A revert copies an old body forward as a new version, so
+         -- history is never destroyed. Created here (IF NOT EXISTS) so older
+         -- project DBs self-heal on open; empty until an agent is customized.
+         CREATE TABLE IF NOT EXISTS agent_instincts (
+             id INTEGER PRIMARY KEY AUTOINCREMENT,
+             agent_id TEXT NOT NULL, version INTEGER NOT NULL,
+             body TEXT NOT NULL, updated_at TEXT NOT NULL
+         );
+         CREATE UNIQUE INDEX IF NOT EXISTS agent_instincts_ver_uq
+             ON agent_instincts(agent_id, version);
          CREATE TABLE IF NOT EXISTS wiki_page (
              id INTEGER PRIMARY KEY AUTOINCREMENT,
              slug TEXT UNIQUE NOT NULL, title TEXT NOT NULL, html TEXT NOT NULL, updated_at TEXT NOT NULL
@@ -393,17 +406,12 @@ pub fn memory_set(db: &Path, mtype: &str, slug: &str, body: &str) -> Result<i64,
     }
     // Plaintext-secret guardrail (mirrors the `scan_secret` command for snapshots):
     // a note is spliced verbatim into the agent prompt, so a real credential pasted
-    // here would leak into context. Reject only the high-confidence shapes (PEM key,
-    // AWS key, bearer token); the looser `credential_assignment` heuristic
-    // false-positives on ordinary notes like "token bucket: ..." and would block
-    // legitimate writes. Secrets belong in the encrypted vault, never in memory.
-    const HIGH_CONFIDENCE: [&str; 3] = ["private_key", "aws_access_key", "bearer_token"];
-    let has_secret = vault::scan_for_secrets(body).iter().any(|f| {
-        f.get("kind")
-            .and_then(|k| k.as_str())
-            .is_some_and(|k| HIGH_CONFIDENCE.contains(&k))
-    });
-    if has_secret {
+    // here would leak into context. The shared `body_has_plaintext_secret` guard
+    // rejects the high-confidence structural shapes (PEM key, AWS key, bearer token)
+    // *and* a bare vendor-prefixed key (e.g. the app's own `sk-or-…`), while the
+    // looser `credential_assignment` heuristic — which false-positives on notes like
+    // "token bucket: ..." — is intentionally excluded. Secrets belong in the vault.
+    if vault::body_has_plaintext_secret(body) {
         return Err(
             "this note looks like it contains a plaintext secret — store it in the encrypted vault, not in project memory".into(),
         );

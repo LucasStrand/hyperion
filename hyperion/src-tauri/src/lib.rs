@@ -11,6 +11,7 @@
 mod agent;
 mod entra;
 mod projects;
+mod roster;
 mod vault;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -530,6 +531,68 @@ fn memory_delete(id: i64, projects: State<'_, Mutex<Projects>>) -> Result<bool, 
     projects::memory_delete(&db, id)
 }
 
+// ----------------------------- roster commands (M5) -----------------------------
+//
+// The agent roster + versioned instincts (roster.rs). Listing the roster works
+// without a project (the built-in agents are static); instinct customization is
+// per-project, so the editor commands require an open project (same contract as
+// memory). All of this is local and read-only toward bOS.
+
+/// The full agent roster. When a project is open, each agent is annotated with
+/// whether its instincts have been customized and the active version.
+#[tauri::command]
+fn agent_roster(projects: State<'_, Mutex<Projects>>) -> Vec<Value> {
+    let db = active_project_db(&projects).ok();
+    roster::roster_json(db.as_deref())
+}
+
+/// Detail view of one agent's instincts (resolved body, built-in baseline, version,
+/// provenance) for the editor. Requires an open project.
+#[tauri::command]
+fn agent_instincts_get(
+    agent_id: String,
+    projects: State<'_, Mutex<Projects>>,
+) -> Result<Value, String> {
+    let db = active_project_db(&projects)?;
+    roster::instincts_detail(&db, &agent_id)
+}
+
+/// Save a new instinct version for an agent (append-only). Validated + secret-scanned.
+/// Returns the new version number. Requires an open project.
+#[tauri::command]
+fn agent_instincts_set(
+    agent_id: String,
+    body: String,
+    projects: State<'_, Mutex<Projects>>,
+) -> Result<Value, String> {
+    let db = active_project_db(&projects)?;
+    let version = roster::instincts_set(&db, &agent_id, &body)?;
+    Ok(json!({ "version": version }))
+}
+
+/// Full instinct version history for an agent (newest first). Requires an open project.
+#[tauri::command]
+fn agent_instincts_history(
+    agent_id: String,
+    projects: State<'_, Mutex<Projects>>,
+) -> Result<Vec<Value>, String> {
+    let db = active_project_db(&projects)?;
+    roster::instincts_history(&db, &agent_id)
+}
+
+/// Revert an agent's instincts to an earlier version (copies it forward as a new
+/// version; `version = 0` restores the built-in baseline). Requires an open project.
+#[tauri::command]
+fn agent_instincts_revert(
+    agent_id: String,
+    version: i64,
+    projects: State<'_, Mutex<Projects>>,
+) -> Result<Value, String> {
+    let db = active_project_db(&projects)?;
+    let new_version = roster::instincts_revert(&db, &agent_id, version)?;
+    Ok(json!({ "version": new_version }))
+}
+
 // ----------------------------- vault commands -----------------------------
 
 /// Vault status (exists / unlocked / secret count) — never returns values.
@@ -880,6 +943,7 @@ fn build_memory_block(notes: &[(String, String)]) -> Option<String> {
 async fn agent_ask(
     question: String,
     focus_path: Option<String>,
+    agent_id: Option<String>,
     store: State<'_, Mutex<Store>>,
     vault: State<'_, Mutex<Vault>>,
     projects: State<'_, Mutex<Projects>>,
@@ -901,9 +965,18 @@ async fn agent_ask(
     // Build grounding, then drop the store lock before the model call. The
     // grounding is .bos-derived (untrusted) data, fenced so the model treats it
     // as data, not instructions (paired with the INSTINCTS note).
-    let grounding = {
+    let (grounding, focus_type) = {
         let s = store.lock().unwrap_or_else(|e| e.into_inner());
-        build_grounding(&s, focus_path.as_deref())
+        let g = build_grounding(&s, focus_path.as_deref());
+        // The focused node's `type`, if any, nudges deterministic routing.
+        let ftype = focus_path
+            .as_deref()
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+            .and_then(|p| lookup_node(&s, p))
+            .and_then(|n| n.get("type").and_then(|v| v.as_str()))
+            .map(|t| t.to_string());
+        (g, ftype)
     };
     // Escape the fence delimiters in the .bos-derived grounding so a hostile node
     // name/path containing `</bos-data>` cannot close the untrusted-data section
@@ -920,20 +993,52 @@ async fn agent_ask(
     // sit in their own labeled section ahead of the untrusted <bos-data> fence,
     // escaped (in build_memory_block) so a note can't break out of it. A missing/
     // empty memory table simply yields no section (an ask works without a project).
-    let memory_block = {
-        let db = {
-            let p = projects.lock().unwrap_or_else(|e| e.into_inner());
-            p.active.as_ref().map(|ap| ap.db.clone())
-        };
-        match db {
-            Some(db) => projects::memory_load_for_prompt(&db)
-                .ok()
-                .and_then(|notes| build_memory_block(&notes)),
-            None => None,
-        }
+    // Resolve the active project DB once (if any) — used for both the chosen
+    // agent's (possibly customized) instincts and the project memory.
+    let db = {
+        let p = projects.lock().unwrap_or_else(|e| e.into_inner());
+        p.active.as_ref().map(|ap| ap.db.clone())
+    };
+
+    // Choose the agent: an explicit, non-empty `agent_id` selects a specialist
+    // directly; otherwise the Coordinator deterministically routes (offline) on
+    // the question text + the focused node's type. An unknown id is a hard error
+    // rather than a silent fallback, so a UI bug can't quietly mis-route.
+    let explicit = agent_id.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let agent = match explicit {
+        Some(id) => roster::get(id).ok_or_else(|| format!("unknown agent: {id}"))?,
+        None => roster::route(&question, focus_type.as_deref()),
+    };
+    let routed = explicit.is_none();
+
+    // Suggested handoffs per the agent's share protocol. Computed now (it borrows
+    // `question`) and owned as JSON so `question` can be moved into the blocking
+    // call below. The static roster references outlive the await.
+    let handoffs: Vec<Value> = roster::suggest_handoffs(agent, &question)
+        .iter()
+        .map(|h| json!({ "id": h.id, "name": h.name }))
+        .collect();
+
+    // The agent's role instincts — the customized version if this project has one,
+    // else the built-in baseline. These are trusted operator/built-in instructions,
+    // so they sit alongside INSTINCTS, ahead of the untrusted <bos-data> fence.
+    let role_block = match &db {
+        Some(db) => roster::role_block(db, agent)
+            .map_err(|e| format!("could not load this agent's instincts: {e}"))?,
+        None => roster::role_block_builtin(agent),
+    };
+
+    // Project memory (operator-authored facts), if a project is open.
+    let memory_block = match &db {
+        Some(db) => projects::memory_load_for_prompt(db)
+            .ok()
+            .and_then(|notes| build_memory_block(&notes)),
+        None => None,
     };
 
     let mut system = agent::INSTINCTS.to_string();
+    system.push_str("\n\n");
+    system.push_str(&role_block);
     if let Some(mem) = &memory_block {
         system.push_str("\n\n# Project memory (operator-authored background facts)\n");
         system.push_str(mem);
@@ -959,7 +1064,13 @@ async fn agent_ask(
     .await
     .map_err(|e| format!("agent task failed: {e}"))??;
 
-    Ok(json!({ "runtime": runtime.label(), "answer": answer }))
+    Ok(json!({
+        "runtime": runtime.label(),
+        "answer": answer,
+        "agent": { "id": agent.id, "name": agent.name, "role": agent.role },
+        "routed": routed,
+        "handoffs": handoffs,
+    }))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -991,6 +1102,11 @@ pub fn run() {
             memory_list,
             memory_set,
             memory_delete,
+            agent_roster,
+            agent_instincts_get,
+            agent_instincts_set,
+            agent_instincts_history,
+            agent_instincts_revert,
             vault_status,
             vault_unlock,
             vault_lock,
