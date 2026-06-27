@@ -10,6 +10,7 @@
 
 mod agent;
 mod collab;
+mod crawler;
 mod diff;
 mod embed;
 mod entra;
@@ -803,6 +804,113 @@ fn context_suggest(
     suggest::suggest(&db, query.as_deref())?
         .iter()
         .map(|s| serde_json::to_value(s).map_err(|e| format!("serialize suggestion: {e}")))
+        .collect()
+}
+
+// ----------------------------- knowledge crawler (M7) -----------------------------
+//
+// A best-effort sidecar (crawler.rs + projects.rs `crawl_*`) that fetches official
+// docs / forum pages, caches the stripped text as project knowledge, and proposes
+// deterministic "eureka" improvements from terms the crawled corpus surfaces that
+// the project's loaded context doesn't yet mention. Per-project, so every command
+// requires an open project. The network fetch is OFF unless `HYPERION_CRAWL_ENABLED`
+// is set (so offline/CI never reaches out), and cached text is secret-scanned by
+// `crawl_store`. Strictly read-only toward bOS.
+
+/// Collect the active project's "context terms": the salient keyword tokens already
+/// present in its loaded grounding — memory note bodies, the active `.bos` snapshot's
+/// node names/paths, and ingested context-file names. The eureka heuristic treats a
+/// crawled term absent from this set as a novel "you should look at X". Read-only and
+/// dependency-free (reuses `ingest::keywords`); any per-source read error is skipped
+/// so a partial project still yields useful terms.
+fn active_context_terms(db: &Path) -> Vec<String> {
+    let mut terms: HashSet<String> = HashSet::new();
+    if let Ok(notes) = projects::memory_load_for_prompt(db) {
+        for (_mtype, body) in notes {
+            terms.extend(ingest::keywords(&body));
+        }
+    }
+    if let Ok(Some((_fname, nodes))) = projects::active_snapshot(db) {
+        if let Some(arr) = nodes.as_array() {
+            for n in arr {
+                if let Some(name) = n.get("name").and_then(|v| v.as_str()) {
+                    terms.extend(ingest::keywords(name));
+                }
+                if let Some(path) = n.get("path").and_then(|v| v.as_str()) {
+                    terms.extend(ingest::keywords(path));
+                }
+            }
+        }
+    }
+    if let Ok(files) = projects::context_list(db) {
+        for f in files {
+            if let Some(name) = f.get("name").and_then(|v| v.as_str()) {
+                terms.extend(ingest::keywords(name));
+            }
+        }
+    }
+    terms.into_iter().collect()
+}
+
+/// Crawl a URL into the active project: fetch the page, extract `(title, text)`, and
+/// cache it (best-effort, upsert by url). Returns `{id, url, title, bytes}`. The
+/// network fetch + HTML parse run on the blocking pool (mirrors `context_add_file`)
+/// so a slow/unreachable host can't stall the async event loop. Disabled (Err) unless
+/// `HYPERION_CRAWL_ENABLED` is set truthy.
+#[tauri::command]
+async fn crawl_add(url: String, projects: State<'_, Mutex<Projects>>) -> Result<Value, String> {
+    let db = active_project_db(&projects)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let html = crawler::fetch(&url)?;
+        let (title, text) = crawler::extract_text(&html);
+        if text.trim().is_empty() {
+            return Err("fetched page had no readable text".to_string());
+        }
+        let title_opt = if title.trim().is_empty() {
+            None
+        } else {
+            Some(title.as_str())
+        };
+        let id = projects::crawl_store(&db, &url, title_opt, &text, Some("web"))?;
+        Ok(json!({ "id": id, "url": url, "title": title, "bytes": text.len() }))
+    })
+    .await
+    .map_err(|e| format!("crawl task failed: {e}"))?
+}
+
+/// List the active project's cached crawl docs (metadata only, never body text).
+#[tauri::command]
+fn crawl_list(projects: State<'_, Mutex<Projects>>) -> Result<Vec<Value>, String> {
+    let db = active_project_db(&projects)?;
+    projects::crawl_list(&db)
+}
+
+/// Fetch one cached crawl doc by id (full record incl. text), or null if absent.
+#[tauri::command]
+fn crawl_get(id: i64, projects: State<'_, Mutex<Projects>>) -> Result<Value, String> {
+    let db = active_project_db(&projects)?;
+    projects::crawl_get(&db, id)
+}
+
+/// Delete a cached crawl doc by id from the active project. Returns whether it existed.
+#[tauri::command]
+fn crawl_delete(id: i64, projects: State<'_, Mutex<Projects>>) -> Result<bool, String> {
+    let db = active_project_db(&projects)?;
+    projects::crawl_delete(&db, id)
+}
+
+/// Run the deterministic eureka heuristic over the active project's cached crawl docs
+/// versus its loaded context terms. Returns one flat JSON object per suggestion
+/// (term, weight, source, message), highest-weighted first — bOS pillar terms
+/// (Configurator/Service/Client) are weighted ahead of incidental vocabulary.
+#[tauri::command]
+fn crawl_eureka(projects: State<'_, Mutex<Projects>>) -> Result<Vec<Value>, String> {
+    let db = active_project_db(&projects)?;
+    let docs = projects::crawl_load_for_eureka(&db)?;
+    let terms = active_context_terms(&db);
+    crawler::eureka(&docs, &terms)
+        .iter()
+        .map(|s| serde_json::to_value(s).map_err(|e| format!("serialize eureka: {e}")))
         .collect()
 }
 
@@ -1759,6 +1867,11 @@ pub fn run() {
             context_add_file,
             context_delete,
             context_suggest,
+            crawl_add,
+            crawl_list,
+            crawl_get,
+            crawl_delete,
+            crawl_eureka,
             pr_list,
             pr_create,
             pr_get,

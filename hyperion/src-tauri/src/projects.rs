@@ -196,7 +196,26 @@ fn init_db(conn: &Connection, name: &str) -> rusqlite::Result<()> {
              body TEXT NOT NULL,
              created_at TEXT NOT NULL
          );
-         CREATE INDEX IF NOT EXISTS pr_comment_pr ON pr_comment(pr_id);",
+         CREATE INDEX IF NOT EXISTS pr_comment_pr ON pr_comment(pr_id);
+         -- Cached external knowledge crawled from official docs / forum pages (M7,
+         -- Requirements #24/#25/#26). One row per source `url`: the extracted `title`
+         -- and `text` (plus an optional `source` tag and `fetched_at` stamp). `text`
+         -- is the stripped page body — stored in the *unencrypted* project DB and read
+         -- back by the eureka heuristic — so it is secret-scanned on write by
+         -- `crawl_store`. Additive + IF NOT EXISTS, so older project DBs self-heal on
+         -- open() with no data loss; an empty table simply means nothing has been
+         -- crawled yet. Managed by the `crawl_*` helpers (CRUD) + the `crawl_*`
+         -- commands (fetch via the `crawler` module). The UNIQUE index on `url` makes
+         -- a re-crawl an in-place refresh (ON CONFLICT(url) upsert) rather than a dup.
+         CREATE TABLE IF NOT EXISTS crawl_doc (
+             id INTEGER PRIMARY KEY AUTOINCREMENT,
+             url TEXT NOT NULL,
+             title TEXT,
+             text TEXT NOT NULL,
+             source TEXT,
+             fetched_at TEXT NOT NULL
+         );
+         CREATE UNIQUE INDEX IF NOT EXISTS crawl_doc_url_uq ON crawl_doc(url);",
     )?;
     // Stamp the version only on a fresh DB — never downgrade a future schema
     // when an older binary self-heals the forward-compat tables on open().
@@ -1017,6 +1036,159 @@ fn rank_chunks_by_cosine(
     )
 }
 
+// ----------------------------- crawled knowledge (M7) -----------------------------
+//
+// Cached external docs/forum pages live in `crawl_doc` (one row per source URL: the
+// extracted title + stripped body text + a fetch stamp). The `crawler` module does
+// the network fetch and HTML extraction; this layer only persists the result and
+// reads it back for the eureka heuristic. As with memory/wiki/context, the stored
+// text lands in the *unencrypted* project DB and is later read into the assistant's
+// view, so on write we run the same `body_has_plaintext_secret` guard — a crawled
+// page that happens to contain a credential must not silently cache it. Strictly
+// local; never written back to bOS.
+
+/// Upper bound on a single cached page's body (bytes). Generous for a long docs/forum
+/// page but capped so one crawl can't bloat the project DB unboundedly. Enforced at
+/// write time in `crawl_store`.
+const MAX_CRAWL_TEXT_LEN: usize = 1024 * 1024;
+
+/// Insert or refresh a crawled document, keyed by its `url`. Requires a non-empty
+/// url and extracted `text` within `MAX_CRAWL_TEXT_LEN`, and rejects text that looks
+/// like a plaintext secret (same guard as `memory_set`/`context_add`) so a crawled
+/// page can't smuggle a credential into the unencrypted project DB. Re-crawling the
+/// same url replaces the prior row in place (ON CONFLICT(url) upsert against the
+/// `crawl_doc_url_uq` index) and re-stamps `fetched_at = datetime('now')`. Returns
+/// the row id.
+pub fn crawl_store(
+    db: &Path,
+    url: &str,
+    title: Option<&str>,
+    text: &str,
+    source: Option<&str>,
+) -> Result<i64, String> {
+    let url = url.trim();
+    if url.is_empty() {
+        return Err("crawl doc needs a url".into());
+    }
+    let text = text.trim();
+    if text.is_empty() {
+        return Err("crawled page had no readable text".into());
+    }
+    if text.len() > MAX_CRAWL_TEXT_LEN {
+        return Err("crawled document is too long (max 1 MB)".into());
+    }
+    // Plaintext-secret guardrail (mirrors memory_set / wiki_save / context_add): the
+    // page text is persisted unencrypted and later read into the assistant's view, so
+    // a credential embedded in a crawled page must be refused. Secrets belong in the
+    // encrypted vault, never in cached knowledge.
+    if vault::body_has_plaintext_secret(text) {
+        return Err(
+            "this page appears to contain a plaintext secret — it was not cached; store credentials in the encrypted vault".into(),
+        );
+    }
+    // Normalize an empty/whitespace title to NULL so `crawl_list` can fall back to the
+    // url cleanly.
+    let title = title.map(|t| t.trim()).filter(|t| !t.is_empty());
+    let source = source.map(|s| s.trim()).filter(|s| !s.is_empty());
+    let conn = Connection::open(db).map_err(|e| format!("open db: {e}"))?;
+    conn.query_row(
+        "INSERT INTO crawl_doc(url, title, text, source, fetched_at)
+         VALUES (?1, ?2, ?3, ?4, datetime('now'))
+         ON CONFLICT(url) DO UPDATE SET
+             title = excluded.title,
+             text = excluded.text,
+             source = excluded.source,
+             fetched_at = excluded.fetched_at
+         RETURNING id",
+        rusqlite::params![url, title, text, source],
+        |r| r.get::<_, i64>(0),
+    )
+    .map_err(|e| format!("upsert crawl doc: {e}"))
+}
+
+/// All cached crawl docs (id, url, title, source, fetched_at, byte size), newest
+/// first. The body `text` is omitted here — fetched per doc via `crawl_get` — so the
+/// list stays lean.
+pub fn crawl_list(db: &Path) -> Result<Vec<Value>, String> {
+    let conn = Connection::open(db).map_err(|e| format!("open db: {e}"))?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, url, title, source, fetched_at, LENGTH(text)
+             FROM crawl_doc ORDER BY fetched_at DESC, id DESC",
+        )
+        .map_err(|e| format!("{e}"))?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(json!({
+                "id": r.get::<_, i64>(0)?,
+                "url": r.get::<_, String>(1)?,
+                "title": r.get::<_, Option<String>>(2)?,
+                "source": r.get::<_, Option<String>>(3)?,
+                "fetched_at": r.get::<_, String>(4)?,
+                "bytes": r.get::<_, i64>(5)?,
+            }))
+        })
+        .map_err(|e| format!("{e}"))?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row.map_err(|e| format!("{e}"))?);
+    }
+    Ok(out)
+}
+
+/// Fetch one cached crawl doc by id as JSON (id, url, title, text, source,
+/// fetched_at), or `Value::Null` when no such row exists.
+pub fn crawl_get(db: &Path, id: i64) -> Result<Value, String> {
+    let conn = Connection::open(db).map_err(|e| format!("open db: {e}"))?;
+    conn.query_row(
+        "SELECT id, url, title, text, source, fetched_at FROM crawl_doc WHERE id = ?1",
+        rusqlite::params![id],
+        |r| {
+            Ok(json!({
+                "id": r.get::<_, i64>(0)?,
+                "url": r.get::<_, String>(1)?,
+                "title": r.get::<_, Option<String>>(2)?,
+                "text": r.get::<_, String>(3)?,
+                "source": r.get::<_, Option<String>>(4)?,
+                "fetched_at": r.get::<_, String>(5)?,
+            }))
+        },
+    )
+    .map(Some)
+    .or_else(|e| match e {
+        rusqlite::Error::QueryReturnedNoRows => Ok(None),
+        other => Err(format!("read crawl doc: {other}")),
+    })
+    .map(|opt| opt.unwrap_or(Value::Null))
+}
+
+/// Delete a cached crawl doc by id. Returns whether a row was removed.
+pub fn crawl_delete(db: &Path, id: i64) -> Result<bool, String> {
+    let conn = Connection::open(db).map_err(|e| format!("open db: {e}"))?;
+    let n = conn
+        .execute("DELETE FROM crawl_doc WHERE id = ?1", rusqlite::params![id])
+        .map_err(|e| format!("delete crawl doc: {e}"))?;
+    Ok(n > 0)
+}
+
+/// Load all cached docs as `(title_or_url, text)` pairs for the eureka heuristic,
+/// ordered by id (insertion order) so the suggestion `source` attribution is
+/// deterministic. A doc with no title falls back to its url as the source label.
+pub fn crawl_load_for_eureka(db: &Path) -> Result<Vec<(String, String)>, String> {
+    let conn = Connection::open(db).map_err(|e| format!("open db: {e}"))?;
+    let mut stmt = conn
+        .prepare("SELECT COALESCE(NULLIF(TRIM(title), ''), url), text FROM crawl_doc ORDER BY id")
+        .map_err(|e| format!("{e}"))?;
+    let rows = stmt
+        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+        .map_err(|e| format!("{e}"))?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row.map_err(|e| format!("{e}"))?);
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1383,6 +1555,102 @@ mod tests {
         // Nothing was stored.
         assert!(context_list(&db).unwrap().is_empty());
 
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn crawl_store_list_get_delete_roundtrip() {
+        let (root, db) = fresh_db("crawl_rt");
+
+        // No docs yet: list is empty and get on a missing id is JSON null.
+        assert!(crawl_list(&db).unwrap().is_empty());
+        assert_eq!(crawl_get(&db, 1).unwrap(), Value::Null);
+
+        // Store a doc (no network — synthetic title/text, as the crawler would pass).
+        let id = crawl_store(
+            &db,
+            "https://docs.example.com/modbus",
+            Some("Modbus on bOS"),
+            "The Configurator maps Modbus registers to the Service.",
+            Some("web"),
+        )
+        .unwrap();
+        assert!(id > 0);
+
+        // It shows up in the list with a byte size, no body text.
+        let list = crawl_list(&db).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0]["url"], "https://docs.example.com/modbus");
+        assert_eq!(list[0]["title"], "Modbus on bOS");
+        assert!(list[0].get("text").is_none());
+        assert!(list[0]["bytes"].as_i64().unwrap() >= 1);
+
+        // Get returns the full record including the body text.
+        let doc = crawl_get(&db, id).unwrap();
+        assert_eq!(doc["url"], "https://docs.example.com/modbus");
+        assert!(doc["text"].as_str().unwrap().contains("Configurator"));
+
+        // Re-crawling the same url upserts in place (no duplicate row).
+        let id2 = crawl_store(
+            &db,
+            "https://docs.example.com/modbus",
+            Some("Modbus on bOS v2"),
+            "Updated body.",
+            Some("web"),
+        )
+        .unwrap();
+        assert_eq!(id, id2);
+        let list = crawl_list(&db).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0]["title"], "Modbus on bOS v2");
+
+        // The eureka loader returns (title_or_url, text) pairs.
+        let docs = crawl_load_for_eureka(&db).unwrap();
+        assert_eq!(docs.len(), 1);
+        assert_eq!(docs[0].0, "Modbus on bOS v2");
+        assert_eq!(docs[0].1, "Updated body.");
+
+        // Validation: empty url / empty text are rejected.
+        assert!(crawl_store(&db, "   ", None, "body", None).is_err());
+        assert!(crawl_store(&db, "https://x", None, "   ", None).is_err());
+
+        // Delete removes it; second delete is a no-op.
+        assert!(crawl_delete(&db, id).unwrap());
+        assert!(!crawl_delete(&db, id).unwrap());
+        assert!(crawl_list(&db).unwrap().is_empty());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn crawl_load_for_eureka_falls_back_to_url_when_untitled() {
+        let (root, db) = fresh_db("crawl_untitled");
+        // No title -> the loader uses the url as the source label.
+        crawl_store(
+            &db,
+            "https://forum.example.com/t/42",
+            None,
+            "Some text.",
+            None,
+        )
+        .unwrap();
+        let docs = crawl_load_for_eureka(&db).unwrap();
+        assert_eq!(docs[0].0, "https://forum.example.com/t/42");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn crawl_store_rejects_plaintext_secret() {
+        let (root, db) = fresh_db("crawl_secret");
+        // A crawled page carrying a bare OpenRouter key must be refused before it can
+        // land in the unencrypted project DB.
+        let body = "config: openrouter_key = sk-or-v1-abc123def456ghi789jkl012mno345";
+        let err = crawl_store(&db, "https://x/leak", None, body, None).unwrap_err();
+        assert!(
+            err.contains("secret") || err.contains("vault"),
+            "got: {err}"
+        );
+        assert!(crawl_list(&db).unwrap().is_empty());
         let _ = std::fs::remove_dir_all(&root);
     }
 }
