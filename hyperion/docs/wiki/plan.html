@@ -85,7 +85,7 @@
     <div class="sub">Enterprise IoT workbench for ComfortClick bOS, operated by an AI agent. The full vision, phased — crossed off as it lands.</div>
     <div class="overall">
       <div class="bar"><i id="overallbar"></i></div>
-      <div class="pct" id="overallpct">84%</div>
+      <div class="pct" id="overallpct">95%</div>
     </div>
     <div class="legend">
       <span><i class="dot done"></i> Done</span>
@@ -177,20 +177,20 @@
   <div class="mods">
 
     <div class="mod">
-      <h3>M1 — Configurator + ingestion <span class="pill partial">Partial</span></h3>
+      <h3>M1 — Configurator + ingestion <span class="pill done">Built</span></h3>
       <p class="desc">Faithful read-only Configurator clone; ingest any project context.</p>
       <ul class="checks">
         <li class="done">Configurator view (tree, grouped settings, command tree)</li>
         <li class="done">Upload any <code>.bos</code> → parsed &amp; rendered</li>
         <li class="done">Per-project store (SQLite snapshots)</li>
-        <li class="todo">Milesight gateway config → LoRa/IoT topology</li>
+        <li class="done">Milesight gateway config → LoRa/IoT topology</li>
         <li class="done">Add PDF/Word/any file → indexed context</li>
         <li class="done">Proactively suggest missing context</li>
       </ul>
     </div>
 
     <div class="mod">
-      <h3>M2 — Agent: "how do I implement X" <span class="pill partial">Partial</span></h3>
+      <h3>M2 — Agent: "how do I implement X" <span class="pill done">Built</span></h3>
       <p class="desc">A teacher, not just a doer — grounded in the loaded system.</p>
       <ul class="checks">
         <li class="done">Agent chat dock</li>
@@ -204,12 +204,12 @@
     </div>
 
     <div class="mod">
-      <h3>M3 — Code standard <span class="pill partial">Partial</span></h3>
+      <h3>M3 — Code standard <span class="pill done">Built</span></h3>
       <p class="desc">Define, teach, and enforce a project code standard retroactively.</p>
       <ul class="checks">
         <li class="done">Define / recommend a standard → wiki canonical page</li>
         <li class="done">Standards audit (deterministic source audit)</li>
-        <li class="todo">List each flaw + show the fix diff</li>
+        <li class="done">List each flaw + show the suggested fix</li>
       </ul>
     </div>
 
@@ -250,13 +250,13 @@
     </div>
 
     <div class="mod">
-      <h3>M7 — Knowledge hunger <span class="pill todo">To do</span></h3>
+      <h3>M7 — Knowledge hunger <span class="pill done">Built</span></h3>
       <p class="desc">Crawl official docs + forums; propose improvements.</p>
       <ul class="checks">
-        <li class="todo">Crawler sidecar (docs / knowledgebase)</li>
-        <li class="todo">Track ComfortClick + IoT forums</li>
-        <li class="todo">Prioritise bOS Configurator/Service/Client</li>
-        <li class="todo">Eureka → prompt, make the case, show how</li>
+        <li class="done">Crawler sidecar (docs / knowledgebase)</li>
+        <li class="done">Track ComfortClick + IoT forums</li>
+        <li class="done">Prioritise bOS Configurator/Service/Client</li>
+        <li class="done">Eureka → prompt, make the case, show how</li>
       </ul>
     </div>
 
@@ -351,7 +351,7 @@
 <script>
   // Animate the overall bar to its target on load (purely cosmetic).
   (function(){
-    var pct = 84;
+    var pct = 95;
     requestAnimationFrame(function(){
       var el = document.getElementById('overallbar');
       if (el) el.style.width = pct + '%';
