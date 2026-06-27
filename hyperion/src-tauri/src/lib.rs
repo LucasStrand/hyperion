@@ -621,7 +621,9 @@ fn context_add_file(path: String, projects: State<'_, Mutex<Projects>>) -> Resul
         .ok_or_else(|| "could not read the file name".to_string())?;
     // Bound the read so a huge/binary file can't be slurped before validation.
     let meta = std::fs::metadata(p).map_err(|e| format!("read file: {e}"))?;
-    if meta.len() as usize > ingest::MAX_FILE_BYTES {
+    // Compare in u64 — `meta.len()` is u64, so casting it down to usize would
+    // truncate (and pass the guard) for a >4 GiB file on a 32-bit build.
+    if meta.len() > ingest::MAX_FILE_BYTES as u64 {
         return Err(format!(
             "file is too large (max {} MB)",
             ingest::MAX_FILE_BYTES / (1024 * 1024)
@@ -988,10 +990,16 @@ fn build_memory_block(notes: &[(String, String)]) -> Option<String> {
 /// `<context-files>` fence inside the untrusted region. Returns the encoded body.
 fn build_context_block(hits: &[(String, String)]) -> String {
     const MAX: usize = 6000;
+    // Entity-encode the fence delimiters AND flatten newlines to a continuation
+    // indent, exactly as build_memory_block hardens operator text: encoding `& < >`
+    // neutralizes the fence, and rewriting each `\n` keeps a multi-line chunk from
+    // starting its own top-level `# ` heading line that could mimic the prompt
+    // skeleton. The block is then structurally inert regardless of file content.
     let safe = |t: &str| {
         t.replace('&', "&amp;")
             .replace('<', "&lt;")
             .replace('>', "&gt;")
+            .replace('\n', "\n  ")
     };
     let mut out = String::new();
     for (name, text) in hits {
@@ -1109,10 +1117,20 @@ async fn agent_ask(
     // this question. This is UNTRUSTED file content (a datasheet could carry injected
     // instructions), so it is entity-encoded and fenced exactly like the .bos data.
     let context_block = match &db {
-        Some(db) => projects::context_retrieve(db, &question, 4)
-            .ok()
-            .filter(|hits| !hits.is_empty())
-            .map(|hits| build_context_block(&hits)),
+        Some(db) => {
+            // context_retrieve scans every chunk row and scores it in Rust — keep that
+            // blocking DB work off the async executor so a large context store can't
+            // stall the Tauri event loop. (JoinError or a retrieval error → no context;
+            // the ask still proceeds on the .bos grounding alone.)
+            let db = db.clone();
+            let q = question.clone();
+            tauri::async_runtime::spawn_blocking(move || projects::context_retrieve(&db, &q, 4))
+                .await
+                .ok()
+                .and_then(|r| r.ok())
+                .filter(|hits| !hits.is_empty())
+                .map(|hits| build_context_block(&hits))
+        }
         None => None,
     };
 

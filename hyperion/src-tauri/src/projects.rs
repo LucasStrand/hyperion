@@ -90,12 +90,21 @@ fn init_db(conn: &Connection, name: &str) -> rusqlite::Result<()> {
              id INTEGER PRIMARY KEY AUTOINCREMENT,
              name TEXT NOT NULL, kind TEXT, added_at TEXT NOT NULL, content BLOB
          );
+         -- One row per file name. context_file is first populated in M1, so no real
+         -- DB can hold a duplicate name to violate this; it makes the name-dedup in
+         -- context_add a DB-enforced invariant (mirrors memory_slug_uq) rather than a
+         -- purely application-level one.
+         CREATE UNIQUE INDEX IF NOT EXISTS context_file_name_uq ON context_file(name);
          -- Extracted, chunked text of an ingested context file (M1). One row per
-         -- chunk, ordered by `ord`; deleted with its file. Created here (IF NOT
-         -- EXISTS) so older project DBs self-heal on open; empty until a file is added.
+         -- chunk, ordered by `ord`; deleted with its file. The FK declares the
+         -- ownership (ON DELETE CASCADE) so the relationship is explicit in the
+         -- schema; context_add/context_delete still cascade manually in a transaction
+         -- (foreign_keys enforcement is a per-connection PRAGMA, left off for now).
+         -- Created here (IF NOT EXISTS) so older project DBs self-heal on open.
          CREATE TABLE IF NOT EXISTS context_chunk (
              id INTEGER PRIMARY KEY AUTOINCREMENT,
-             file_id INTEGER NOT NULL, ord INTEGER NOT NULL, text TEXT NOT NULL
+             file_id INTEGER NOT NULL REFERENCES context_file(id) ON DELETE CASCADE,
+             ord INTEGER NOT NULL, text TEXT NOT NULL
          );
          CREATE INDEX IF NOT EXISTS context_chunk_file ON context_chunk(file_id);
          CREATE TABLE IF NOT EXISTS memory (
@@ -487,6 +496,18 @@ pub fn context_add(db: &Path, name: &str, bytes: &[u8]) -> Result<Value, String>
     }
     let kind = ingest::detect_kind(name);
     let text = ingest::extract_text(name, bytes)?;
+    // Plaintext-secret guardrail (mirrors memory_set and roster instinct writes):
+    // ingested text is stored in the *unencrypted* project DB and later spliced into
+    // the agent prompt — and on the cloud runtime, sent to OpenRouter. A config file
+    // (.yaml/.json/.ini/.conf) carrying an embedded credential would otherwise leak
+    // silently. The shared `body_has_plaintext_secret` guard rejects the high-
+    // confidence shapes (PEM key, AWS key, bearer token, bare vendor `sk-or-…` keys).
+    // Secrets belong in the encrypted vault, never in a context file.
+    if vault::body_has_plaintext_secret(&text) {
+        return Err(
+            "this file appears to contain a plaintext secret — store credentials in the encrypted vault, not in a context file".into(),
+        );
+    }
     let chunks = ingest::chunk(&text);
     if chunks.is_empty() {
         return Err("no readable text to index".into());
@@ -779,6 +800,20 @@ mod tests {
         assert!(!context_delete(&db, id).unwrap());
         assert!(context_list(&db).unwrap().is_empty());
         assert!(context_retrieve(&db, "belimo", 4).unwrap().is_empty());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn context_add_rejects_plaintext_secret() {
+        let (root, db) = fresh_db("ctx_secret");
+        // A config file carrying a bare OpenRouter key must be refused *before* it can
+        // land in the unencrypted project DB or be spliced into the model prompt.
+        let secret = b"{\n  \"openrouter_key\": \"sk-or-v1-abc123def456ghi789jkl012mno345\"\n}\n";
+        let err = context_add(&db, "creds.json", secret).unwrap_err();
+        assert!(err.contains("plaintext secret"), "got: {err}");
+        // Nothing was stored.
+        assert!(context_list(&db).unwrap().is_empty());
 
         let _ = std::fs::remove_dir_all(&root);
     }

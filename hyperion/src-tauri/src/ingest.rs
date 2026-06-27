@@ -122,12 +122,24 @@ fn find_line_break(chars: &[char], start: usize, end: usize) -> Option<usize> {
         .map(|i| i + 1)
 }
 
-/// Lowercased alphanumeric word tokens of length >= 3 — short tokens ("of", "to",
-/// "a") are dropped so retrieval keys off meaningful terms.
+/// Common English function words that pass the length filter but carry no topical
+/// signal. Because `score` matches by substring across every chunk, leaving these in
+/// lets an ordinary English question ("how do I configure the network?") score chunks
+/// on "how"/"the"/"are" and crowd out the genuinely relevant ones. Short domain terms
+/// (PID, fan, bus) are deliberately NOT here. Kept small and lowercase.
+const STOP_WORDS: [&str; 38] = [
+    "the", "and", "for", "are", "was", "were", "been", "being", "that", "this", "these", "those",
+    "with", "from", "into", "onto", "its", "their", "them", "they", "you", "your", "our", "but",
+    "not", "all", "any", "can", "how", "what", "where", "when", "which", "who", "why", "has",
+    "have", "had",
+];
+
+/// Lowercased alphanumeric word tokens of length >= 3, minus common English stop-words
+/// — so retrieval keys off meaningful terms, not the connective tissue of a sentence.
 pub fn keywords(s: &str) -> HashSet<String> {
     s.to_lowercase()
         .split(|c: char| !c.is_ascii_alphanumeric())
-        .filter(|t| t.len() >= 3)
+        .filter(|t| t.len() >= 3 && !STOP_WORDS.contains(t))
         .map(|t| t.to_string())
         .collect()
 }
@@ -204,8 +216,10 @@ mod tests {
         let one_line = "a".repeat(CHUNK_TARGET * 3 + 17);
         let chunks = chunk(&one_line);
         assert!(chunks.len() >= 3);
+        // For this whitespace-free input no per-chunk trim removes content, so the
+        // overlap makes the concatenation at least as long as the original.
         let joined: String = chunks.concat();
-        assert!(joined.len() >= one_line.len()); // overlap means >=, never loses content
+        assert!(joined.len() >= one_line.len());
     }
 
     #[test]
@@ -214,6 +228,8 @@ mod tests {
         assert!(q.contains("modbus"));
         assert!(q.contains("belimo"));
         assert!(!q.contains("is")); // short token dropped
+        assert!(!q.contains("what")); // stop-word dropped
+        assert!(!q.contains("the")); // stop-word dropped
         let hit = score(&q, "The Belimo actuator sits on Modbus slave 7.");
         let miss = score(&q, "The lobby scene fades over four seconds.");
         assert!(hit > miss);
