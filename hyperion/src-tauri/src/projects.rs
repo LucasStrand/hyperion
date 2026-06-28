@@ -215,7 +215,27 @@ fn init_db(conn: &Connection, name: &str) -> rusqlite::Result<()> {
              source TEXT,
              fetched_at TEXT NOT NULL
          );
-         CREATE UNIQUE INDEX IF NOT EXISTS crawl_doc_url_uq ON crawl_doc(url);",
+         CREATE UNIQUE INDEX IF NOT EXISTS crawl_doc_url_uq ON crawl_doc(url);
+         -- Curated, per-project registry of crawl SOURCES (multi-source sweep, M7
+         -- extension). One row per source `url`: a human `label`, a `kind`
+         -- ('docs'|'forum') so the operator can curate official ComfortClick/IoT docs
+         -- AND forum threads, and an `enabled` flag (1/0) so a source can be parked
+         -- without deleting it. A `sweep` fetches every ENABLED source through the same
+         -- best-effort fetch+strip path as a single `crawl_add` and caches the result
+         -- into `crawl_doc` above. Additive + IF NOT EXISTS, so older project DBs
+         -- self-heal on open() with no data loss; an empty table simply means no
+         -- sources have been curated yet. Managed by the `source_*` helpers (CRUD) +
+         -- the `crawl_source_*` / `crawl_sweep` commands. The UNIQUE index on `url`
+         -- makes re-adding a source an in-place update (ON CONFLICT(url) upsert).
+         CREATE TABLE IF NOT EXISTS crawl_source (
+             id INTEGER PRIMARY KEY AUTOINCREMENT,
+             url TEXT NOT NULL,
+             label TEXT,
+             kind TEXT NOT NULL DEFAULT 'docs',
+             enabled INTEGER NOT NULL DEFAULT 1,
+             added_at TEXT NOT NULL
+         );
+         CREATE UNIQUE INDEX IF NOT EXISTS crawl_source_url_uq ON crawl_source(url);",
     )?;
     // Stamp the version only on a fresh DB — never downgrade a future schema
     // when an older binary self-heals the forward-compat tables on open().
@@ -1189,6 +1209,209 @@ pub fn crawl_load_for_eureka(db: &Path) -> Result<Vec<(String, String)>, String>
     Ok(out)
 }
 
+// ----------------------------- crawl source registry + sweep (M7 extension) -----------------------------
+//
+// A curated, per-project list of crawl SOURCES (`crawl_source` table) turns the M7
+// single-page crawler into a multi-source, tiered system. The operator curates
+// official ComfortClick/IoT documentation URLs *and* forum threads; a "sweep" then
+// fetches every enabled source and caches it into `crawl_doc` (above), feeding the
+// same eureka -> PR loop. The work is tiered HONESTLY and the split is explicit here:
+//
+//   * CHEAP pass — the "dumber crawler" tier. For each enabled source: fetch + strip +
+//     store. This is exactly the existing single-page logic (`crawler::fetch` ->
+//     `crawler::extract_text` -> `crawl_store`), just driven over a list. It is pure
+//     I/O with NO model in the loop. `sources_enabled` + `crawl_store_deduped` are its
+//     two building blocks and are unit-testable without the network.
+//   * SMART pass — the "smarter agent" tier. AFTER the cheap pass has refreshed the
+//     cache, the existing deterministic eureka heuristic distills/dedups the crawled
+//     corpus against the project's loaded context (`crawl_load_for_eureka` + the
+//     caller's `eureka`), producing the same novel-term findings that flow into
+//     `crawl_eureka_propose_pr` unchanged. This tier is a heuristic distiller, NOT an
+//     external LLM agent: nothing here spawns a model — the "smarter" label is about
+//     comparing-against-context, not about invoking AI from Rust.
+//
+// Strictly local and READ-ONLY toward bOS / offsite: a sweep only ever GETs remote
+// pages (and only when `HYPERION_CRAWL_ENABLED` is set), and every cached page is
+// secret-scanned by `crawl_store` before it lands in the unencrypted project DB.
+
+/// The two source kinds. `docs` = official documentation; `forum` = a community/forum
+/// thread. Both are swept identically — the kind is a label that travels into the
+/// cached doc's `source` column so forum findings remain attributable, and so the UI
+/// can group sources — but is NOT a filter (forum findings flow into eureka/PRs
+/// exactly like docs findings).
+pub const CRAWL_SOURCE_KINDS: [&str; 2] = ["docs", "forum"];
+
+/// Is `kind` one of the allowed source kinds?
+pub fn valid_source_kind(kind: &str) -> bool {
+    CRAWL_SOURCE_KINDS.contains(&kind)
+}
+
+/// Add (or update) a curated crawl source, keyed by its `url`. Requires a non-empty
+/// `http(s)` url and a valid `kind` (docs|forum); a blank `label` is normalized to
+/// NULL (the UI falls back to the url). Re-adding the same url upserts the label/kind
+/// in place (ON CONFLICT(url) against `crawl_source_url_uq`) and re-enables it, so the
+/// registry never accumulates duplicates. Returns the row id. The scheme is validated
+/// here so a bad source can't sit in the registry only to fail every sweep.
+pub fn source_add(db: &Path, url: &str, label: Option<&str>, kind: &str) -> Result<i64, String> {
+    let url = url.trim();
+    if url.is_empty() {
+        return Err("crawl source needs a url".into());
+    }
+    if !url.starts_with("https://") && !url.starts_with("http://") {
+        return Err("crawl source: only http:// and https:// URLs are allowed".into());
+    }
+    if !valid_source_kind(kind) {
+        return Err(format!(
+            "invalid source kind '{kind}' (expected one of docs|forum)"
+        ));
+    }
+    let label = label.map(|l| l.trim()).filter(|l| !l.is_empty());
+    let conn = Connection::open(db).map_err(|e| format!("open db: {e}"))?;
+    conn.query_row(
+        "INSERT INTO crawl_source(url, label, kind, enabled, added_at)
+         VALUES (?1, ?2, ?3, 1, datetime('now'))
+         ON CONFLICT(url) DO UPDATE SET
+             label = excluded.label,
+             kind = excluded.kind,
+             enabled = 1
+         RETURNING id",
+        rusqlite::params![url, label, kind],
+        |r| r.get::<_, i64>(0),
+    )
+    .map_err(|e| format!("upsert crawl source: {e}"))
+}
+
+/// All curated crawl sources (id, url, label, kind, enabled, added_at), ordered by
+/// kind then url for a stable UI.
+pub fn source_list(db: &Path) -> Result<Vec<Value>, String> {
+    let conn = Connection::open(db).map_err(|e| format!("open db: {e}"))?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, url, label, kind, enabled, added_at
+             FROM crawl_source ORDER BY kind, url, id",
+        )
+        .map_err(|e| format!("{e}"))?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(json!({
+                "id": r.get::<_, i64>(0)?,
+                "url": r.get::<_, String>(1)?,
+                "label": r.get::<_, Option<String>>(2)?,
+                "kind": r.get::<_, String>(3)?,
+                "enabled": r.get::<_, i64>(4)? != 0,
+                "added_at": r.get::<_, String>(5)?,
+            }))
+        })
+        .map_err(|e| format!("{e}"))?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row.map_err(|e| format!("{e}"))?);
+    }
+    Ok(out)
+}
+
+/// Enable or disable a curated source by id (parks it without deleting). Returns
+/// whether a row was updated.
+pub fn source_set_enabled(db: &Path, id: i64, enabled: bool) -> Result<bool, String> {
+    let conn = Connection::open(db).map_err(|e| format!("open db: {e}"))?;
+    let n = conn
+        .execute(
+            "UPDATE crawl_source SET enabled = ?2 WHERE id = ?1",
+            rusqlite::params![id, i64::from(enabled)],
+        )
+        .map_err(|e| format!("update crawl source: {e}"))?;
+    Ok(n > 0)
+}
+
+/// Remove a curated source by id. Returns whether a row existed. (Cached pages already
+/// fetched from it remain in `crawl_doc` — removing a source stops future sweeps from
+/// refreshing it, it does not purge knowledge.)
+pub fn source_remove(db: &Path, id: i64) -> Result<bool, String> {
+    let conn = Connection::open(db).map_err(|e| format!("open db: {e}"))?;
+    let n = conn
+        .execute(
+            "DELETE FROM crawl_source WHERE id = ?1",
+            rusqlite::params![id],
+        )
+        .map_err(|e| format!("delete crawl source: {e}"))?;
+    Ok(n > 0)
+}
+
+/// The CHEAP-pass work list: every ENABLED source as `(url, kind)`, ordered by id
+/// (insertion order) so a sweep is deterministic. Disabled sources are excluded here —
+/// the single place a sweep decides what to fetch — so a parked source costs nothing.
+pub fn sources_enabled(db: &Path) -> Result<Vec<(String, String)>, String> {
+    let conn = Connection::open(db).map_err(|e| format!("open db: {e}"))?;
+    let mut stmt = conn
+        .prepare("SELECT url, kind FROM crawl_source WHERE enabled = 1 ORDER BY id")
+        .map_err(|e| format!("{e}"))?;
+    let rows = stmt
+        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+        .map_err(|e| format!("{e}"))?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row.map_err(|e| format!("{e}"))?);
+    }
+    Ok(out)
+}
+
+/// What a dedup-aware crawl store did. `Created` = a brand-new url; `Updated` = the url
+/// existed but its content changed (re-fetched and refreshed); `Unchanged` = the url
+/// existed and the freshly fetched text is byte-identical to what is cached, so nothing
+/// was rewritten. The CHEAP sweep pass reports these so a re-run is honestly "safe":
+/// re-sweeping unchanged sources is a no-op, not a churn of identical rows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CrawlOutcome {
+    Created,
+    Updated,
+    Unchanged,
+}
+
+/// Store a freshly fetched page with content DEDUPE on top of the url-keyed upsert in
+/// `crawl_store`. If the url is already cached with byte-identical (trimmed) text this
+/// short-circuits to `Unchanged` WITHOUT touching the row (so `fetched_at` and the row
+/// id stay put and a re-sweep doesn't thrash the DB); otherwise it delegates to
+/// `crawl_store` (same validation, secret-scan, and url upsert) and reports whether the
+/// row was newly `Created` or `Updated`. Returns `(id, outcome)`. This is the dedupe
+/// half of the cheap tier and is unit-tested without the network.
+pub fn crawl_store_deduped(
+    db: &Path,
+    url: &str,
+    title: Option<&str>,
+    text: &str,
+    source: Option<&str>,
+) -> Result<(i64, CrawlOutcome), String> {
+    let url_trim = url.trim();
+    let text_trim = text.trim();
+    // Look up any existing row's id + cached text so we can both detect "no change"
+    // and classify a real write as Created vs Updated.
+    let existing: Option<(i64, String)> = {
+        let conn = Connection::open(db).map_err(|e| format!("open db: {e}"))?;
+        conn.query_row(
+            "SELECT id, text FROM crawl_doc WHERE url = ?1",
+            rusqlite::params![url_trim],
+            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)),
+        )
+        .map(Some)
+        .or_else(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => Ok(None),
+            other => Err(format!("read crawl doc: {other}")),
+        })?
+    };
+    if let Some((id, cached)) = &existing {
+        if cached.trim() == text_trim {
+            return Ok((*id, CrawlOutcome::Unchanged));
+        }
+    }
+    let id = crawl_store(db, url, title, text, source)?;
+    let outcome = if existing.is_some() {
+        CrawlOutcome::Updated
+    } else {
+        CrawlOutcome::Created
+    };
+    Ok((id, outcome))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1651,6 +1874,177 @@ mod tests {
             "got: {err}"
         );
         assert!(crawl_list(&db).unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ---- crawl source registry + sweep tiers ----
+
+    #[test]
+    fn valid_source_kind_accepts_only_docs_and_forum() {
+        for k in CRAWL_SOURCE_KINDS {
+            assert!(valid_source_kind(k));
+        }
+        assert!(valid_source_kind("docs"));
+        assert!(valid_source_kind("forum"));
+        assert!(!valid_source_kind("blog"));
+        assert!(!valid_source_kind(""));
+        assert!(!valid_source_kind("Docs")); // case-sensitive
+    }
+
+    #[test]
+    fn source_registry_crud_roundtrip_and_url_dedup() {
+        let (root, db) = fresh_db("src_crud");
+
+        // Empty registry.
+        assert!(source_list(&db).unwrap().is_empty());
+        assert!(sources_enabled(&db).unwrap().is_empty());
+
+        // Add a docs source and a forum source.
+        let d = source_add(
+            &db,
+            "https://wiki.comfortclick.com/Modbus",
+            Some("Modbus docs"),
+            "docs",
+        )
+        .unwrap();
+        assert!(d > 0);
+        let f = source_add(&db, "https://forum.comfortclick.com/t/knx", None, "forum").unwrap();
+        assert!(f > 0);
+
+        let list = source_list(&db).unwrap();
+        assert_eq!(list.len(), 2);
+        // Ordered by kind then url: docs before forum.
+        assert_eq!(list[0]["kind"], "docs");
+        assert_eq!(list[0]["label"], "Modbus docs");
+        assert_eq!(list[0]["enabled"], true);
+        assert_eq!(list[1]["kind"], "forum");
+        // Blank label normalizes to NULL.
+        assert!(list[1]["label"].is_null());
+
+        // Both enabled -> both are sweep targets, as (url, kind).
+        let targets = sources_enabled(&db).unwrap();
+        assert_eq!(targets.len(), 2);
+        assert!(targets
+            .iter()
+            .any(|(u, k)| u.contains("Modbus") && k == "docs"));
+        assert!(targets
+            .iter()
+            .any(|(u, k)| u.contains("knx") && k == "forum"));
+
+        // Re-adding the same url upserts in place (no duplicate row) and updates label/kind.
+        let d2 = source_add(
+            &db,
+            "https://wiki.comfortclick.com/Modbus",
+            Some("Modbus (updated)"),
+            "forum",
+        )
+        .unwrap();
+        assert_eq!(d, d2);
+        assert_eq!(source_list(&db).unwrap().len(), 2);
+        let updated = source_list(&db)
+            .unwrap()
+            .into_iter()
+            .find(|s| s["id"].as_i64() == Some(d))
+            .unwrap();
+        assert_eq!(updated["label"], "Modbus (updated)");
+        assert_eq!(updated["kind"], "forum");
+
+        // Disable parks it: excluded from sweep targets but still listed.
+        assert!(source_set_enabled(&db, f, false).unwrap());
+        assert_eq!(source_list(&db).unwrap().len(), 2);
+        let targets = sources_enabled(&db).unwrap();
+        assert_eq!(targets.len(), 1);
+        assert!(targets.iter().all(|(u, _)| !u.contains("knx")));
+        // set_enabled on a missing id returns false.
+        assert!(!source_set_enabled(&db, 9999, true).unwrap());
+
+        // Validation: empty url, bad scheme, bad kind are all rejected.
+        assert!(source_add(&db, "   ", None, "docs").is_err());
+        assert!(source_add(&db, "ftp://x/y", None, "docs").is_err());
+        assert!(source_add(&db, "https://x/y", None, "blog").is_err());
+
+        // Remove is idempotent on the second call.
+        assert!(source_remove(&db, f).unwrap());
+        assert!(!source_remove(&db, f).unwrap());
+        assert_eq!(source_list(&db).unwrap().len(), 1);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn crawl_store_deduped_is_safe_to_rerun() {
+        // The CHEAP-pass dedupe half: re-storing identical content is a no-op, a real
+        // change updates in place, and a new url is created — so a re-sweep is honest.
+        let (root, db) = fresh_db("crawl_dedup");
+        let url = "https://docs.example.com/p";
+
+        // First store of a brand-new url -> Created.
+        let (id1, o1) =
+            crawl_store_deduped(&db, url, Some("P"), "alpha beta", Some("docs")).unwrap();
+        assert_eq!(o1, CrawlOutcome::Created);
+
+        // Re-store byte-identical text (even with extra surrounding whitespace, which
+        // crawl_store trims) -> Unchanged, same row, NOT rewritten.
+        let before = crawl_get(&db, id1).unwrap();
+        let (id2, o2) =
+            crawl_store_deduped(&db, url, Some("P"), "  alpha beta  ", Some("docs")).unwrap();
+        assert_eq!(id2, id1);
+        assert_eq!(o2, CrawlOutcome::Unchanged);
+        let after = crawl_get(&db, id1).unwrap();
+        assert_eq!(before["fetched_at"], after["fetched_at"]); // untouched
+
+        // Changed content -> Updated, same row id.
+        let (id3, o3) =
+            crawl_store_deduped(&db, url, Some("P"), "alpha beta gamma", Some("docs")).unwrap();
+        assert_eq!(id3, id1);
+        assert_eq!(o3, CrawlOutcome::Updated);
+
+        // Still exactly one row for this url (dedupe by url held throughout).
+        assert_eq!(crawl_list(&db).unwrap().len(), 1);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn sweep_tiers_are_separable_cheap_feeds_smart() {
+        // Tier separation, end to end WITHOUT the network: the CHEAP pass (here,
+        // crawl_store_deduped standing in for fetch+strip+store over sources_enabled)
+        // populates crawl_doc; the SMART pass (eureka over the cached corpus) then runs
+        // independently against the loaded context. Forum-kind docs participate exactly
+        // like docs-kind ones.
+        let (root, db) = fresh_db("sweep_tiers");
+
+        // Cheap pass result: two cached pages, one tagged forum.
+        crawl_store_deduped(
+            &db,
+            "https://docs.example.com/a",
+            Some("Docs A"),
+            "The Configurator maps Modbus registers.",
+            Some("docs"),
+        )
+        .unwrap();
+        crawl_store_deduped(
+            &db,
+            "https://forum.example.com/t/1",
+            Some("Forum thread"),
+            "Someone solved a KNX scene with the Client.",
+            Some("forum"),
+        )
+        .unwrap();
+
+        // Smart pass input: the cached corpus, loaded for eureka.
+        let docs = crawl_load_for_eureka(&db).unwrap();
+        assert_eq!(docs.len(), 2);
+
+        // Smart pass: eureka distills novel terms vs a context that already knows
+        // "modbus"/"registers". Pillar terms (configurator/client) surface, and the
+        // FORUM finding flows through unchanged (no kind filtering).
+        let ctx = vec!["modbus".to_string(), "registers".to_string()];
+        let suggestions = crate::crawler::eureka(&docs, &ctx);
+        assert!(suggestions.iter().any(|s| s.term == "configurator"));
+        assert!(suggestions.iter().any(|s| s.term == "client"));
+        assert!(suggestions.iter().any(|s| s.source == "Forum thread"));
+
         let _ = std::fs::remove_dir_all(&root);
     }
 }

@@ -94,6 +94,12 @@ const api = {
   crawlDelete: (id) => invoke("crawl_delete", { id }),
   crawlEureka: () => invoke("crawl_eureka"),
   crawlEurekaProposePr: () => invoke("crawl_eureka_propose_pr"),
+  // multi-source registry + tiered sweep (projects.rs crawl_source / crawl_sweep)
+  crawlSourceAdd:        (url, label, kind) => invoke("crawl_source_add", { url, label, kind }),
+  crawlSourceList:       () => invoke("crawl_source_list"),
+  crawlSourceSetEnabled: (id, enabled) => invoke("crawl_source_set_enabled", { id, enabled }),
+  crawlSourceRemove:     (id) => invoke("crawl_source_remove", { id }),
+  crawlSweep:            (smart) => invoke("crawl_sweep", { smart }),
   // code standard + self-audit of Hyperion's own sources (src-tauri/src/standard.rs)
   codeStandard: () => invoke("code_standard"),
   codeAudit:    () => invoke("code_audit"),
@@ -1179,6 +1185,55 @@ async function refreshCrawl(){
     try{ await api.crawlDelete(Number(b.dataset.id)); await refreshCrawl(); }
     catch(e){ alert('Delete failed: '+e); }});
 }
+// ----- curated crawl source registry + tiered sweep (projects.rs crawl_source / crawl_sweep) -----
+async function refreshCrawlSources(){
+  const list=$('#crawlsrclist'); let srcs=[];
+  try{ srcs=await api.crawlSourceList(); }catch(e){ kqErr(list,e); return; }
+  list.innerHTML = srcs.length
+    ? srcs.map(s=>'<div class="amemitem"><div class="mtop">'
+        +'<span class="actxkind">'+esc(s.kind)+'</span>'
+        +'<span class="mslug">'+esc(s.label||s.url)+'</span>'
+        +'<label class="mut" style="font-size:11px;margin-left:auto;display:inline-flex;align-items:center;gap:3px">'
+          +'<input type="checkbox" class="srcen" data-id="'+esc(s.id)+'"'+(s.enabled?' checked':'')+'> on</label>'
+        +'<span class="mdel" data-id="'+esc(s.id)+'">delete</span></div>'
+        +'<div class="actxmeta mut">'+esc(s.url)+'</div></div>').join('')
+    : '<div class="mut" style="font-size:12px;padding:4px 2px">No sources curated yet. Add official docs/forum URLs above, then "Sweep now". Open a project first.</div>';
+  $$('#crawlsrclist .srcen').forEach(c=>c.onclick=async()=>{
+    try{ await api.crawlSourceSetEnabled(Number(c.dataset.id), c.checked); }
+    catch(e){ alert('Update failed: '+e); await refreshCrawlSources(); }});
+  $$('#crawlsrclist .mdel').forEach(b=>b.onclick=async()=>{
+    if(!confirm('Remove this source? (cached pages are kept)')) return;
+    try{ await api.crawlSourceRemove(Number(b.dataset.id)); await refreshCrawlSources(); }
+    catch(e){ alert('Delete failed: '+e); }});
+}
+async function addCrawlSource(){
+  const inp=$('#crawlsrcurl'); const url=(inp.value||'').trim();
+  if(!url){ alert('Enter a source URL (e.g. https://wiki.comfortclick.com/...).'); return; }
+  const label=($('#crawlsrclabel').value||'').trim();
+  const kind=$('#crawlsrckind').value||'docs';
+  try{
+    await api.crawlSourceAdd(url, label||null, kind);
+    inp.value=''; $('#crawlsrclabel').value='';
+    await refreshCrawlSources();
+  }catch(e){ alert('Add source failed: '+e); }
+}
+// Tiered sweep: CHEAP fetch+strip+store over every enabled source (deduped, safe to
+// re-run), then an optional SMART eureka-distill pass. Refreshes the cached-page list.
+async function sweepCrawl(){
+  const btn=$('#crawlsweep'), st=$('#crawlsweepstatus');
+  const smart=$('#crawlsweepsmart').checked;
+  btn.disabled=true; const label=btn.textContent; btn.textContent='Sweeping…'; st.textContent='';
+  try{
+    const r=await api.crawlSweep(smart);
+    await refreshCrawl();
+    let msg=r.sources+' source'+(r.sources===1?'':'s')+' swept · '
+      +r.created+' new, '+r.updated+' updated, '+r.unchanged+' unchanged, '+r.failed+' failed';
+    if(smart) msg+=' · '+r.eureka_findings+' eureka finding'+(r.eureka_findings===1?'':'s');
+    if(r.failed){ msg+=' — '+(r.errors||[]).map(e=>esc(e.url)).join(', '); }
+    st.textContent=msg;
+  }catch(e){ st.textContent='Sweep failed: '+e; }
+  finally{ btn.disabled=false; btn.textContent=label; }
+}
 async function addCrawl(){
   const inp=$('#crawlurl'); const url=(inp.value||'').trim();
   if(!url){ alert('Enter a URL to crawl (e.g. https://wiki.comfortclick.com/...).'); return; }
@@ -1457,7 +1512,10 @@ async function init(){
   $('#ksugrun').onclick=runContextSuggest;
   $('#mstoggle').onclick=()=>kqToggle('#kqms','#msbody',null);
   $('#msimport').onclick=runMilesightImport;
-  $('#crawltoggle').onclick=()=>kqToggle('#kqcrawl','#crawlbody',refreshCrawl);
+  $('#crawltoggle').onclick=()=>kqToggle('#kqcrawl','#crawlbody',()=>{ refreshCrawlSources(); refreshCrawl(); });
+  $('#crawlsrcadd').onclick=addCrawlSource;
+  $('#crawlsrcurl').addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); addCrawlSource(); }});
+  $('#crawlsweep').onclick=sweepCrawl;
   $('#crawladd').onclick=addCrawl;
   $('#crawlurl').addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); addCrawl(); }});
   $('#crawleurekabtn').onclick=runEureka;
