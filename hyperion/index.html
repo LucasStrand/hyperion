@@ -234,6 +234,26 @@
         <div class="amembody" id="crawlbody" style="display:none">
           <div class="amemnote">Cache a documentation page per project, then run the deterministic &laquo;eureka&raquo;
             finder to surface terms the crawled pages mention that aren't in your loaded context. Open a project first.</div>
+
+          <!-- Curated multi-source registry: official docs + forum URLs the operator
+               maintains, swept in one shot. A sweep tiers the work honestly: a CHEAP
+               fetch+strip+store pass, then an optional SMART eureka-distill pass. -->
+          <div class="amemnote" style="margin-top:8px"><b>Crawl sources</b> &mdash; curate official ComfortClick/IoT docs &amp; forum URLs, then sweep them all at once.</div>
+          <div class="amemrow">
+            <input id="crawlsrcurl" placeholder="https://wiki.comfortclick.com/&hellip;">
+            <input id="crawlsrclabel" placeholder="label (optional)" style="max-width:120px">
+            <select id="crawlsrckind"><option value="docs">docs</option><option value="forum">forum</option></select>
+            <button type="button" id="crawlsrcadd" class="appbtn">Add source</button>
+          </div>
+          <div id="crawlsrclist" class="amemlist"></div>
+          <div class="amemrow" style="margin-top:6px">
+            <button type="button" id="crawlsweep" class="appbtn">Sweep now</button>
+            <label class="mut" style="font-size:11px;display:flex;align-items:center;gap:4px">
+              <input type="checkbox" id="crawlsweepsmart" checked> smart pass (eureka distill)</label>
+          </div>
+          <div id="crawlsweepstatus" class="mut" style="font-size:11px;margin:4px 0"></div>
+
+          <div class="amemnote" style="margin-top:8px"><b>Or cache one page</b></div>
           <div class="amemrow">
             <input id="crawlurl" placeholder="https://wiki.comfortclick.com/&hellip;">
             <button type="button" id="crawladd" class="appbtn">Crawl URL</button>

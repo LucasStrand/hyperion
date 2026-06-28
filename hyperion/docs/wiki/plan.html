@@ -257,7 +257,11 @@
         <li class="done">Track ComfortClick + IoT forums</li>
         <li class="done">Prioritise bOS Configurator/Service/Client</li>
         <li class="done">Eureka → prompt, make the case, show how</li>
+        <li class="done">Multi-source registry + tiered sweep (cheap fetch+strip+store · smart eureka distill)</li>
       </ul>
+      <p class="desc" style="font-size:11px;margin-top:6px"><strong>Recurring sweeps:</strong> Hyperion can't schedule itself (no fake in-process cron).
+        Drive the <code>crawl_sweep</code> command on a schedule from outside the app with Claude Code's
+        <code>CronCreate</code>/<code>loop</code> — see the "Recurring sweeps" note in <code>README.md</code>.</p>
     </div>
 
     <div class="mod">

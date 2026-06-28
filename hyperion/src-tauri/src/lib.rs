@@ -1096,6 +1096,147 @@ fn crawl_eureka_propose_pr(projects: State<'_, Mutex<Projects>>) -> Result<Value
     }))
 }
 
+// --- multi-source crawl: curated source registry + tiered sweep (M7 extension) ---
+//
+// The single-page `crawl_add` above is upgraded into a multi-source, tiered system.
+// The operator curates a per-project REGISTRY of official ComfortClick/IoT docs +
+// forum URLs (`crawl_source_*`), then a `crawl_sweep` fetches every enabled source in
+// one shot. The sweep tiers the work HONESTLY (see `projects::crawl_store_deduped` /
+// `sources_enabled` for the in-depth split):
+//   * CHEAP pass ("dumber crawler"): for each enabled source, fetch + strip + store —
+//     the exact single-page logic, looped, deduped by url/content so a re-run is safe.
+//   * SMART pass ("smarter agent"): the deterministic eureka heuristic distills the
+//     refreshed corpus against the loaded project context. This is a heuristic
+//     distiller, NOT an external LLM — nothing here spawns a model from Rust.
+//
+// RECURRING sweeps: Hyperion is a desktop app and CANNOT schedule itself (there is no
+// in-process cron — that would be a fake). To run a sweep on a schedule, drive this
+// command from OUTSIDE the app with Claude Code's `CronCreate`/`loop` against a small
+// script that opens the project and invokes `crawl_sweep`. See the "Recurring sweeps"
+// note in README.md / docs/wiki/plan.html for the exact recipe.
+
+/// Add (or update) a curated crawl source for the active project. `kind` is `docs` or
+/// `forum`; `label` is optional. Re-adding the same url upserts in place. Returns the
+/// source `{id}` shape via `source_list` semantics (just the new id here).
+#[tauri::command]
+fn crawl_source_add(
+    url: String,
+    label: Option<String>,
+    kind: String,
+    projects: State<'_, Mutex<Projects>>,
+) -> Result<i64, String> {
+    let db = active_project_db(&projects)?;
+    projects::source_add(&db, &url, label.as_deref(), &kind)
+}
+
+/// List the active project's curated crawl sources (id, url, label, kind, enabled, added_at).
+#[tauri::command]
+fn crawl_source_list(projects: State<'_, Mutex<Projects>>) -> Result<Vec<Value>, String> {
+    let db = active_project_db(&projects)?;
+    projects::source_list(&db)
+}
+
+/// Enable or disable one curated source by id (parks it without deleting). Returns
+/// whether a row was updated.
+#[tauri::command]
+fn crawl_source_set_enabled(
+    id: i64,
+    enabled: bool,
+    projects: State<'_, Mutex<Projects>>,
+) -> Result<bool, String> {
+    let db = active_project_db(&projects)?;
+    projects::source_set_enabled(&db, id, enabled)
+}
+
+/// Remove one curated source by id (already-cached pages stay in `crawl_doc`). Returns
+/// whether a row existed.
+#[tauri::command]
+fn crawl_source_remove(id: i64, projects: State<'_, Mutex<Projects>>) -> Result<bool, String> {
+    let db = active_project_db(&projects)?;
+    projects::source_remove(&db, id)
+}
+
+/// Sweep every ENABLED curated source into the active project's cached knowledge, then
+/// (optionally) distill it.
+///
+/// CHEAP pass (always): for each enabled source, run the same best-effort fetch+strip
+/// path as `crawl_add` and cache the result via `crawl_store_deduped` — deduping by
+/// url AND content so re-running the sweep is safe (unchanged sources are no-ops). Each
+/// source's `kind` (docs|forum) is carried into the cached doc's `source` tag, so forum
+/// pages remain attributable and are swept identically to docs. Per-source failures are
+/// collected, never fatal — a slow/unreachable host doesn't abort the rest.
+///
+/// SMART pass (`smart = true`): after the cache is refreshed, run the deterministic
+/// eureka heuristic over the whole crawled corpus vs the loaded context and report how
+/// many novel findings it surfaced (the operator then opens `crawl_eureka_propose_pr`).
+/// This is a heuristic distiller, not an external agent — no model is invoked here.
+///
+/// The network fetch + HTML parse run on the blocking pool (mirrors `crawl_add`) so a
+/// slow host can't stall the async event loop. Disabled (each fetch Errs) unless
+/// `HYPERION_CRAWL_ENABLED` is set truthy.
+#[tauri::command]
+async fn crawl_sweep(smart: bool, projects: State<'_, Mutex<Projects>>) -> Result<Value, String> {
+    let db = active_project_db(&projects)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        // ---- CHEAP pass ("dumber crawler"): fetch + strip + store, deduped. ----
+        let sources = projects::sources_enabled(&db)?;
+        let mut created = 0u32;
+        let mut updated = 0u32;
+        let mut unchanged = 0u32;
+        let mut failed = 0u32;
+        let mut errors: Vec<Value> = Vec::new();
+        for (url, kind) in &sources {
+            match crawler::fetch(url) {
+                Ok(html) => {
+                    let (title, text) = crawler::extract_text(&html);
+                    if text.trim().is_empty() {
+                        failed += 1;
+                        errors.push(json!({ "url": url, "error": "page had no readable text" }));
+                        continue;
+                    }
+                    let title_opt = if title.trim().is_empty() {
+                        None
+                    } else {
+                        Some(title.as_str())
+                    };
+                    match projects::crawl_store_deduped(&db, url, title_opt, &text, Some(kind)) {
+                        Ok((_, projects::CrawlOutcome::Created)) => created += 1,
+                        Ok((_, projects::CrawlOutcome::Updated)) => updated += 1,
+                        Ok((_, projects::CrawlOutcome::Unchanged)) => unchanged += 1,
+                        Err(e) => {
+                            failed += 1;
+                            errors.push(json!({ "url": url, "error": e }));
+                        }
+                    }
+                }
+                Err(e) => {
+                    failed += 1;
+                    errors.push(json!({ "url": url, "error": e }));
+                }
+            }
+        }
+        // ---- SMART pass ("smarter agent"): eureka distill vs loaded context. ----
+        // Heuristic, deterministic, offline — NOT an external LLM agent.
+        let eureka_findings = if smart {
+            active_eureka_suggestions(&db)?.len()
+        } else {
+            0
+        };
+        Ok(json!({
+            "sources": sources.len(),
+            "created": created,
+            "updated": updated,
+            "unchanged": unchanged,
+            "failed": failed,
+            "errors": errors,
+            "smart": smart,
+            "eureka_findings": eureka_findings,
+        }))
+    })
+    .await
+    .map_err(|e| format!("sweep task failed: {e}"))?
+}
+
 // ----------------------------- collab: PRs + timeline (M8) -----------------------------
 //
 // In-app pull requests (human narrative + AI docs), their comment/argue threads,
@@ -2110,6 +2251,11 @@ pub fn run() {
             crawl_delete,
             crawl_eureka,
             crawl_eureka_propose_pr,
+            crawl_source_add,
+            crawl_source_list,
+            crawl_source_set_enabled,
+            crawl_source_remove,
+            crawl_sweep,
             pr_list,
             pr_create,
             pr_get,
