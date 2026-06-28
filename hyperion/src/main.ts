@@ -44,6 +44,10 @@ const api = {
   agentAsk:    (question, focusPath, agentId) => invoke("agent_ask", { question, focusPath, agentId }),
   // deterministic MCP/skill recommender (src-tauri/src/tooling.rs)
   recommendTools: (query) => invoke("recommend_tools", { query }),
+  // honest execution bridge: build a runnable/advisory plan for a recommendation, and
+  // (only with execute:true, and only for an ECC skill under a detected Claude Code
+  // runtime) actually run it. Everything else comes back advisory. (src-tauri/src/tooling.rs)
+  runTool: (kind, name, execute) => invoke("run_tool", { kind, name, execute }),
 
   agentRoster:           () => invoke("agent_roster"),
   agentInstinctsGet:     (agentId) => invoke("agent_instincts_get", { agentId }),
@@ -1286,16 +1290,55 @@ async function runRecommend(){
   if(!recs.length){ out.innerHTML='<div class="mut" style="font-size:12px;padding:4px 2px">No recommendations for the current context.</div>'; return; }
   // The list is already in domain-priority order, so reading it top-to-bottom is the
   // suggested tool plan. Each item shows a copy-pasteable "how to run it" hint
-  // (slash-command / MCP server·tool) for the operator or the external agent runtime
-  // — Hyperion does not execute skills or MCP tools itself; this is guidance only.
-  out.innerHTML='<div class="mut" style="font-size:11px;padding:0 2px 4px">Suggested tool plan, in order &mdash; run each in your agent runtime (advisory; Hyperion does not auto-run them).</div>'
-    +recs.map((r,i)=>'<div class="amemitem"><div class="mtop">'
+  // (slash-command / MCP server·tool). The "Build command" button asks the backend for a
+  // concrete plan under the detected runtime: an ECC skill under Claude Code can then be
+  // really run from here; everything else stays advisory (copy-and-run-yourself).
+  out.innerHTML='<div class="mut" style="font-size:11px;padding:0 2px 4px">Suggested tool plan, in order. Use <b>Build command</b> to get the exact invocation; ECC skills run from here only when Claude Code is the active runtime &mdash; MCP tools stay advisory.</div>'
+    +recs.map((r,i)=>'<div class="amemitem" data-kind="'+esc(r.kind)+'" data-name="'+esc(r.name)+'"><div class="mtop">'
     +'<span class="mut" style="font-size:11px;font-family:Consolas,ui-monospace,monospace;margin-right:6px">'+(i+1)+'.</span>'
     +'<span class="actxkind '+esc(r.kind)+'">'+esc(r.kind)+'</span>'
     +'<span class="mslug">'+esc(r.name)+'</span></div>'
     +'<div class="mbody">'+esc(r.reason)+'</div>'
     +(r.invoke?'<div class="mbody" style="font-family:Consolas,ui-monospace,monospace;font-size:11.5px;color:var(--acc);margin-top:3px">'+esc(r.invoke)+'</div>':'')
+    +'<div class="mtop" style="margin-top:4px"><button type="button" class="recplan">Build command</button></div>'
+    +'<div class="recout"></div>'
     +'</div>').join('');
+  // Wire each "Build command" button: fetch the plan (execute:false). If the plan is
+  // really executable here, also offer a "Run it" button that confirms execution.
+  $$('#reclist .recplan').forEach(b=>b.onclick=async()=>{
+    const item=b.closest('.amemitem'); const cell=item.querySelector('.recout');
+    const kind=item.dataset.kind, name=item.dataset.name;
+    b.disabled=true; const lbl=b.textContent; b.textContent='Building…';
+    kqBusy(cell,'Building the command…');
+    try{
+      const p=await api.runTool(kind,name,false);
+      renderToolPlan(cell,p,kind,name);
+    }catch(e){ kqErr(cell,e); }
+    finally{ b.disabled=false; b.textContent=lbl; }
+  });
+}
+
+// Render a tool-invocation plan (from run_tool) and, when it is really executable here,
+// an opt-in "Run it" button. Marks plainly what is real execution vs. advisory guidance.
+function renderToolPlan(cell, p, kind, name){
+  const exec=!!p.executable;
+  cell.innerHTML='<div class="mbody" style="font-family:Consolas,ui-monospace,monospace;font-size:11.5px;color:var(--acc);margin-top:4px;white-space:pre-wrap">'+esc(p.display||'')+'</div>'
+    +'<div class="mut" style="font-size:11px;margin-top:3px">'+esc(p.note||'')+'</div>'
+    +(exec?'<div class="mtop" style="margin-top:4px"><button type="button" class="recrun">&#9654; Run it (Claude Code)</button></div>':'')
+    +'<div class="recrunout"></div>';
+  if(!exec) return;
+  cell.querySelector('.recrun').onclick=async(ev)=>{
+    const btn=ev.currentTarget; const ro=cell.querySelector('.recrunout');
+    if(!confirm('Run "'+name+'" as a headless Claude Code session now?')) return;
+    btn.disabled=true; const lbl=btn.textContent; btn.textContent='Running…';
+    kqBusy(ro,'Running the skill in a headless Claude Code session…');
+    try{
+      const r=await api.runTool(kind,name,true);
+      if(r.ran){ ro.innerHTML='<div class="mbody" style="white-space:pre-wrap;font-size:12px;margin-top:4px">'+esc(r.output||'(no output)')+'</div>'; }
+      else{ ro.innerHTML='<div class="mut" style="font-size:11px;margin-top:4px">'+esc(r.reason||'Nothing ran.')+'</div>'; }
+    }catch(e){ kqErr(ro,e); }
+    finally{ btn.disabled=false; btn.textContent=lbl; }
+  };
 }
 
 // ----- wiki export to a chosen folder (export.rs) -----
