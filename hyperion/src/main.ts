@@ -749,8 +749,35 @@ async function importBos(){
   }catch(e){ alert('Import .bos failed: '+e); }
 }
 
+// ---------- theme toggle (additive UI only; no backend involved) ----------
+function applyTheme(t){
+  const root=document.documentElement;
+  if(t==='dark'||t==='light') root.setAttribute('data-theme',t);
+  else root.removeAttribute('data-theme');
+  const btn=$('#themebtn');
+  if(btn){
+    const dark = t==='dark' || (t!=='light' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    btn.innerHTML = dark ? '&#9728;' : '&#9680;';   // sun when dark, half-moon when light
+    btn.title = dark ? 'Switch to light theme' : 'Switch to dark theme';
+  }
+}
+function initTheme(){
+  let saved=null; try{ saved=localStorage.getItem('hyperion-theme'); }catch(e){}
+  applyTheme(saved);
+  const btn=$('#themebtn'); if(!btn) return;
+  btn.onclick=()=>{
+    const root=document.documentElement;
+    const cur=root.getAttribute('data-theme');
+    const dark = cur==='dark' || (!cur && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    const next = dark ? 'light' : 'dark';
+    try{ localStorage.setItem('hyperion-theme', next); }catch(e){}
+    applyTheme(next);
+  };
+}
+
 // ---------- boot ----------
 async function init(){
+  initTheme();
   await renderConfig();
 
   $('#search').oninput=e=>{const q=e.target.value.toLowerCase();
