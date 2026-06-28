@@ -64,12 +64,20 @@ jobs:
 
             ### Install
             Download the `.exe` (NSIS) or `.msi` installer below and run it.
+            **Self-contained — no Python or other prerequisites required.**
 
-            ### Prerequisite (temporary)
-            Importing a `.bos` config currently requires **Python 3** on PATH plus
-            `pip install nrbf`. Install Python from https://python.org, run
-            `pip install nrbf`, then launch Hyperion. This prerequisite is removed
-            in a later release once `.bos` parsing is ported to pure Rust.
+            ### What's new since 1.0.0
+            - **Pure-Rust `.bos` parser** — imports are now native (exact parity
+              with the reference parser); the previous Python + `nrbf` prerequisite
+              is gone. Python is only an automatic fallback if the Rust parser ever
+              errors on an unforeseen record.
+            - **Professional themeable UI** — a full design system with light/dark.
+            - **Knowledge → PR loop** — crawler "eureka" findings become a
+              human-approvable in-app pull-request proposal.
+            - **Wiki artifact templates** — pick from html-effectiveness templates
+              (themeable) when authoring wiki pages.
+            - **Actionable tooling recommendations** — each suggestion carries a
+              concrete invoke hint (advisory; Hyperion never auto-runs tools).
 
             bOS access is **read-only** by default; restore/reset procedures are
             documented in-app. No credentials are bundled in this build.
