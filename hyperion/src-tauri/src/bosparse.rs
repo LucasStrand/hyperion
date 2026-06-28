@@ -172,7 +172,12 @@ impl<'a> Reader<'a> {
                 break;
             }
             shift += 7;
-            if shift > 35 {
+            // A .NET 7-bit length prefix is at most 5 bytes (35 bits). After the
+            // 5th continuation byte `shift` is 35; a 6th byte would shift by 35,
+            // which panics on a 32-bit `usize`. Reject once `shift` passes 28 so
+            // a valid 5-byte length (whose final byte has no continuation bit and
+            // breaks before this check) is still accepted, but a 6th byte cannot.
+            if shift > 28 {
                 return Err("string length varint too long".into());
             }
         }
@@ -299,7 +304,12 @@ impl<'a> Reader<'a> {
         if count < 0 {
             return Err("negative member count".into());
         }
-        let mut member_names = Vec::with_capacity(count as usize);
+        // Bound the preallocation by the bytes left in the buffer: an attacker
+        // can set `count` to i32::MAX (~48 GB reservation → process abort). Each
+        // member name is at least one byte, so the buffer is a hard ceiling; the
+        // bounds-checked read loop below errors fast on truncation.
+        let cap = (count as usize).min(self.buf.len().saturating_sub(self.pos));
+        let mut member_names = Vec::with_capacity(cap);
         for _ in 0..count {
             member_names.push(self.lps()?);
         }
@@ -307,11 +317,14 @@ impl<'a> Reader<'a> {
     }
 
     fn read_member_type_info(&mut self, count: usize) -> R<(Vec<u8>, Vec<Additional>)> {
-        let mut binary_types = Vec::with_capacity(count);
+        // Bound the preallocations by the remaining buffer (each binary type is at
+        // least one byte) so a huge member count can't drive a giant reservation.
+        let cap = count.min(self.buf.len().saturating_sub(self.pos));
+        let mut binary_types = Vec::with_capacity(cap);
         for _ in 0..count {
             binary_types.push(self.u8()?);
         }
-        let mut additional = Vec::with_capacity(count);
+        let mut additional = Vec::with_capacity(cap);
         for &bt in &binary_types {
             match bt {
                 0 | 7 => additional.push(Additional::Primitive(self.u8()?)), // Primitive | PrimitiveArray
@@ -394,38 +407,46 @@ impl<'a> Reader<'a> {
     }
 
     fn read_inline_value(&mut self) -> R<Value> {
-        if self.pos >= self.buf.len() {
-            return Ok(Value::Null);
+        // Loop (not recurse) so an arbitrarily long chain of inline BinaryLibrary
+        // (type 12) records — each of which merely precedes the value it annotates
+        // — cannot overflow the stack (Rust stack overflow is a non-unwinding
+        // abort). Every other record type returns from the loop on its first pass,
+        // preserving the original behavior exactly.
+        loop {
+            if self.pos >= self.buf.len() {
+                return Ok(Value::Null);
+            }
+            let pos = self.pos;
+            let rec = self.u8()?;
+            return Ok(match rec {
+                6 => Value::String(self.read_binary_object_string_body()?), // BinaryObjectString
+                9 => json!({ "__ref__": self.i32()? }),                     // MemberReference
+                10 => Value::Null,                                          // ObjectNull
+                5 => json!({ "__ref__": self.read_class_with_members_and_types(false)? }),
+                4 => json!({ "__ref__": self.read_class_with_members_and_types(true)? }),
+                1 => json!({ "__ref__": self.read_class_with_id()? }),
+                15 => self.read_array_single_primitive()?,
+                16 => self.read_array_single_object()?,
+                17 => self.read_array_single_string()?,
+                7 => self.read_binary_array()?,
+                8 => {
+                    // MemberPrimitiveTyped
+                    let pt = self.u8()?;
+                    self.primitive(pt)?
+                }
+                12 => {
+                    // BinaryLibrary may appear inline before the value it precedes.
+                    // Consume it and read the next record in-place (no recursion).
+                    self.read_binary_library()?;
+                    continue;
+                }
+                other => {
+                    return Err(format!(
+                        "unexpected inline record type {other} at offset {pos}"
+                    ))
+                }
+            });
         }
-        let pos = self.pos;
-        let rec = self.u8()?;
-        Ok(match rec {
-            6 => Value::String(self.read_binary_object_string_body()?), // BinaryObjectString
-            9 => json!({ "__ref__": self.i32()? }),                     // MemberReference
-            10 => Value::Null,                                          // ObjectNull
-            5 => json!({ "__ref__": self.read_class_with_members_and_types(false)? }),
-            4 => json!({ "__ref__": self.read_class_with_members_and_types(true)? }),
-            1 => json!({ "__ref__": self.read_class_with_id()? }),
-            15 => self.read_array_single_primitive()?,
-            16 => self.read_array_single_object()?,
-            17 => self.read_array_single_string()?,
-            7 => self.read_binary_array()?,
-            8 => {
-                // MemberPrimitiveTyped
-                let pt = self.u8()?;
-                self.primitive(pt)?
-            }
-            12 => {
-                // BinaryLibrary may appear inline before the value it precedes.
-                self.read_binary_library()?;
-                self.read_inline_value()?
-            }
-            other => {
-                return Err(format!(
-                    "unexpected inline record type {other} at offset {pos}"
-                ))
-            }
-        })
     }
 
     fn read_binary_object_string_body(&mut self) -> R<String> {
@@ -469,7 +490,14 @@ impl<'a> Reader<'a> {
     fn read_array_elements(&mut self, length: i32) -> R<Vec<Value>> {
         let mut arr = Vec::new();
         let mut i = 0i64;
-        let length = length.max(0) as i64;
+        // Bound the declared element count by the bytes left in the buffer. Every
+        // array element is described by at least one byte in the stream (a record
+        // tag, or the multi-null filler records below), so a valid array can never
+        // declare more elements than there are remaining bytes; capping here stops
+        // an attacker-supplied i32::MAX length (e.g. via ArraySingleObject) from
+        // driving the null-fill loop into a multi-GB allocation / process abort.
+        let remaining = self.buf.len().saturating_sub(self.pos) as i64;
+        let length = (length.max(0) as i64).min(remaining);
         while i < length {
             if self.pos >= self.buf.len() {
                 break;
@@ -490,6 +518,14 @@ impl<'a> Reader<'a> {
                 }
                 14 => {
                     let count = self.i32()? as i64; // ObjectNullMultiple
+                    if count < 0 {
+                        return Err("negative ObjectNullMultiple count".into());
+                    }
+                    // Clamp to the array's remaining element budget so a crafted
+                    // i32::MAX count can't push ~2B nulls (~48 GB → abort). A valid
+                    // file never declares more nulls than the array has slots left,
+                    // so this is a no-op on correct input.
+                    let count = count.min(length - i);
                     for _ in 0..count {
                         arr.push(Value::Null);
                     }
@@ -512,7 +548,11 @@ impl<'a> Reader<'a> {
         if rank < 0 {
             return Err("negative array rank".into());
         }
-        let mut lengths = Vec::with_capacity(rank as usize);
+        // Bound the preallocation by the remaining buffer: each dimension length is
+        // a 4-byte i32, so the buffer caps how many a valid record can carry; an
+        // attacker-supplied i32::MAX rank can't force a multi-GB reservation.
+        let cap = (rank as usize).min(self.buf.len().saturating_sub(self.pos));
+        let mut lengths = Vec::with_capacity(cap);
         for _ in 0..rank {
             lengths.push(self.i32()?);
         }
@@ -1263,6 +1303,95 @@ mod tests {
         );
         assert_eq!(short_name("A.B.If+ConditionTypes"), "If");
         assert_eq!(short_name("Bare"), "Bare");
+    }
+
+    // ---- Malformed-input hardening (these MUST return Err, never panic/abort) ----
+    //
+    // Each test constructs the minimal crafted byte sequence a reviewer described
+    // for a process-abort DoS in the MS-NRBF reader (Rust OOM and stack overflow
+    // are non-unwinding aborts, so the parser must refuse BEFORE allocating or
+    // recursing on a file-controlled size). A passing run proves the size is now
+    // bounded — without the fixes these inputs crash the test binary outright.
+
+    #[test]
+    fn rejects_giant_member_count() {
+        // ClassWithMembersAndTypes claiming i32::MAX members, then truncated.
+        // Without the capacity bound this reserves ~48 GB and aborts.
+        let mut b = Blob::new();
+        b.header(1);
+        b.u8(5).i32(2).lps("C").i32(i32::MAX);
+        // (no member names follow — the bounds-checked read loop must Err)
+        let r = parse_bos_file(&b.0);
+        assert!(r.is_err(), "giant member count must Err, got {r:?}");
+    }
+
+    #[test]
+    fn rejects_giant_array_rank() {
+        // BinaryArray with i32::MAX rank, then truncated. Without the capacity
+        // bound the `lengths` Vec reservation aborts the process.
+        let mut b = Blob::new();
+        b.header(1);
+        b.u8(7).i32(2).u8(0).i32(i32::MAX);
+        let r = parse_bos_file(&b.0);
+        assert!(r.is_err(), "giant array rank must Err, got {r:?}");
+    }
+
+    #[test]
+    fn bounds_object_null_multiple_count() {
+        // ArraySingleObject declaring i32::MAX length whose first element is an
+        // ObjectNullMultiple (type 14) claiming i32::MAX nulls. Both the length
+        // and the null count are bounded to the remaining buffer, so instead of
+        // pushing ~2B nulls (~48 GB) the parser stays bounded and surfaces the
+        // trailing invalid top-level record as a clean Err.
+        let mut b = Blob::new();
+        b.header(1);
+        b.u8(16).i32(2).i32(i32::MAX); // ArraySingleObject id=2, length=i32::MAX
+        b.u8(14).i32(i32::MAX); // ObjectNullMultiple count=i32::MAX
+        b.u8(99); // invalid top-level record after the (bounded) array
+        let r = parse_bos_file(&b.0);
+        assert!(
+            r.is_err(),
+            "huge ObjectNullMultiple must stay bounded + Err, got {r:?}"
+        );
+    }
+
+    #[test]
+    fn survives_long_binary_library_chain() {
+        // A class whose single member's inline value is a chain of 200k inline
+        // BinaryLibrary (type 12) records. The old recursive reader overflowed the
+        // stack (~120 KB of chain) and aborted; the iterative reader must parse it
+        // without crashing. Chain terminates in ObjectNull so the parse succeeds.
+        let mut b = Blob::new();
+        b.header(1);
+        b.u8(5).i32(2).lps("C").i32(1).lps("m"); // class def: 1 member "m"
+        b.u8(1); // member type: String (no additional info)
+        b.i32(0); // libraryId
+        for _ in 0..200_000 {
+            b.u8(12).i32(0).lps("L"); // inline BinaryLibrary
+        }
+        b.u8(10); // ObjectNull terminates the inline value
+        b.end();
+        let r = parse_bos_file(&b.0);
+        assert!(
+            r.is_ok(),
+            "long type-12 chain must not overflow the stack, got {r:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_overlong_string_varint() {
+        // BinaryObjectString whose 7-bit length prefix has six continuation bytes.
+        // The spec caps the prefix at five bytes (35 bits); a sixth byte would
+        // shift by 35 and panic on a 32-bit usize, so it must be rejected.
+        let mut b = Blob::new();
+        b.header(1);
+        b.u8(6).i32(2); // BinaryObjectString id=2
+        for _ in 0..6 {
+            b.u8(0x80); // continuation bit set, six times
+        }
+        b.u8(0x00);
+        let r = parse_bos_file(&b.0);
+        assert!(r.is_err(), "over-long string varint must Err, got {r:?}");
     }
 
     // ---- Sample-file parity check (manual; not run in CI) ----

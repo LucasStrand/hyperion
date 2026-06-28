@@ -433,6 +433,18 @@ fn run_parser(
 /// reconstructs the node tree, and persists the same JSON `out_json` the Python
 /// reference wrote (so dev-mode `bos_map.json` keeps working).
 fn parse_bos_rust(bos_path: &str, out_json: &Path) -> Result<Vec<Value>, String> {
+    // Cap the read so an oversized/hostile .bos can't be slurped whole before the
+    // parser (which works on the full byte buffer) ever runs. Mirrors the
+    // metadata pre-check on the other ingest paths (`milesight_import`,
+    // `context_add_file`). Compare in u64 — `len()` is u64.
+    const MAX_BOS_BYTES: u64 = 256 * 1024 * 1024;
+    let meta = std::fs::metadata(bos_path).map_err(|e| format!("read .bos file: {e}"))?;
+    if meta.len() > MAX_BOS_BYTES {
+        return Err(format!(
+            "the .bos file is too large (max {} MB)",
+            MAX_BOS_BYTES / (1024 * 1024)
+        ));
+    }
     let bytes = std::fs::read(bos_path).map_err(|e| format!("read .bos file: {e}"))?;
     let nodes = bosparse::parse_bos_file(&bytes)?;
     let text =

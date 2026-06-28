@@ -50,7 +50,7 @@ jobs:
       # for the pushed tag and uploads the NSIS .exe / .msi from
       # hyperion/src-tauri/target/release/bundle/.
       - name: Build installer and publish release
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@51a9f1156b33df106d827c3a78f8f894946c5faa # v0.5.25
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:

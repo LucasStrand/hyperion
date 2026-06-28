@@ -1,6 +1,6 @@
 [package]
 name = "hyperion"
-version = "1.1.0"
+version = "1.1.1"
 description = "Hyperion — enterprise IoT workbench for ComfortClick bOS"
 authors = ["Lucas Strand"]
 edition = "2021"

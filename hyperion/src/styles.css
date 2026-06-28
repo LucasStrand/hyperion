@@ -6,18 +6,17 @@
    are preserved by name because main.ts sets them inline via icon().
    ============================================================================ */
 
-/* ---------- web font (graceful system fallback when offline) ---------- */
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap");
-
 /* ===========================================================================
    1. DESIGN TOKENS — light theme (default)
    =========================================================================== */
 :root {
   color-scheme: light;
 
-  /* type */
-  --font-sans: "Inter", "Segoe UI", system-ui, -apple-system, Roboto, Helvetica, Arial, sans-serif;
-  --font-mono: "JetBrains Mono", "Cascadia Code", Consolas, ui-monospace, "SF Mono", monospace;
+  /* type — self-contained system stack (no outbound web-font fetch; the app CSP
+     blocks remote styles anyway, and an enterprise/air-gapped build must not leak
+     connections to fonts.googleapis.com). */
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Code", "Consolas", "SF Mono", monospace;
   --fs-2xs: 10px;
   --fs-xs: 11px;
   --fs-sm: 12px;
