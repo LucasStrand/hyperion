@@ -330,9 +330,13 @@ input:focus-visible,select:focus-visible,textarea:focus-visible,.amsg .pbload:fo
       </div>
       <div id="vlist" class="vlist"></div>
       <div class="vadd">
-        <input id="vname" placeholder="name (e.g. bos-main-login)" disabled>
-        <input id="vval" type="password" placeholder="secret value" disabled>
-        <button id="vsave" class="appbtn" disabled>Save</button>
+        <input id="vname" list="vkeynames" placeholder="key name (e.g. openrouter_api_key)" disabled>
+        <datalist id="vkeynames">
+          <option value="openrouter_api_key"></option>
+          <option value="firecrawl_api_key"></option>
+        </datalist>
+        <input id="vval" type="password" placeholder="API key / secret value" disabled>
+        <button id="vsave" class="appbtn" disabled>Save to vault</button>
       </div>
       <div class="vscan">
         <div class="mut">Guardrail &mdash; paste text to check before storing it as plaintext context:</div>
