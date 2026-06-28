@@ -727,6 +727,60 @@ code { font-family: var(--font-mono); color: var(--acc-strong); background: var(
 .chk-no { color: var(--err-fg); }
 #gsummary { font-size: var(--fs-sm); font-weight: 500; margin-left: 8px; opacity: .95; }
 
+/* guided walkthrough: per-step app/location/action/verify (instructional only) */
+.guiwalk {
+  margin-top: 6px;
+  border-left: 3px solid var(--acc);
+  padding-left: 9px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.guirow { display: flex; flex-direction: column; gap: 2px; }
+.guiapp {
+  align-self: flex-start;
+  font-size: var(--fs-2xs); font-weight: 700;
+  padding: 1px 8px; border-radius: var(--r-pill);
+  letter-spacing: .02em;
+  background: var(--surface-3); color: var(--ink); border: 1px solid var(--line);
+}
+.guiapp.app-configurator { background: var(--acc-soft); color: var(--acc); border-color: var(--acc); }
+.guiapp.app-service { background: var(--warn-bg); color: var(--warn-fg); border-color: var(--warn-line); }
+.guiapp.app-client { background: var(--ok-bg); color: var(--ok-fg); border-color: var(--ok-line); }
+.guiloc { font-size: var(--fs-xs); color: var(--mut); }
+.guiact { font-size: var(--fs-sm); color: var(--ink); font-weight: 500; }
+.guiver { font-size: var(--fs-xs); color: var(--ink-soft); font-style: italic; }
+
+/* per-step "done" toggle + completed styling */
+.gdone {
+  float: right;
+  font-size: var(--fs-2xs); font-weight: 600;
+  padding: 1px 8px; border-radius: var(--r-pill);
+  border: 1px solid var(--line); background: var(--surface);
+  color: var(--mut); cursor: pointer;
+  transition: background var(--t) var(--ease), color var(--t) var(--ease), border-color var(--t) var(--ease);
+}
+.gdone:hover { border-color: var(--acc); color: var(--ink); }
+.gstep.done { border-color: var(--ok-line); background: var(--ok-bg); }
+.gstep.done .gdone { background: var(--ok-fg); color: #fff; border-color: var(--ok-fg); }
+
+/* guide footer: Back / position / Next */
+#guide .gf {
+  position: sticky; bottom: 0;
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 14px;
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+}
+.gnav {
+  font-size: var(--fs-sm); font-weight: 600;
+  padding: 4px 12px; border-radius: var(--r-pill);
+  border: 1px solid var(--line); background: var(--surface);
+  color: var(--ink); cursor: pointer;
+  transition: background var(--t) var(--ease), border-color var(--t) var(--ease), opacity var(--t) var(--ease);
+}
+.gnav:hover:not(:disabled) { border-color: var(--acc); background: var(--acc-soft); }
+.gnav:disabled { opacity: .45; cursor: default; }
+.gpos { font-size: var(--fs-sm); color: var(--mut); margin: 0 auto; }
+
 /* ===========================================================================
    15. INLINE HIGHLIGHT / before→after chips
    =========================================================================== */

@@ -10,6 +10,13 @@
       "action": "navigate | add | set   (controls the colored action badge: navigate=go to a node, add=create a node, set=set a value/binding)",
       "target": "Tasks\\Exact\\Node\\Path   (a real node path; clicking the step highlights it yellow in the left tree)",
       "detail": "Exactly what to click/do in the Configurator for this step.",
+      "ui": {
+        "_comment": "Optional guided-walkthrough action(s) for the real ComfortClick apps. INSTRUCTIONAL ONLY - Hyperion guides the human step-by-step; the human performs every click, nothing is automated. May be a single object or an array of them (for a multi-click step). Rendered in the step as an app badge + location + action + expected result. Invalid entries (unknown app, or empty action) are dropped by the loader; a step with no valid entry simply shows no ui block. Keep optional so older playbooks stay valid.",
+        "app": "Configurator | Service | Client   (which real bOS app to act in)",
+        "location": "Where in that app's UI - the menu path or panel, e.g. 'Tasks > Kylvatten anläggning tak 84000-CM1'",
+        "action": "Exactly what to click, set, or type, e.g. 'Right-click > Add > Program; name it Stopp takpump vid läckage'",
+        "verify": "What the operator should see to confirm the step worked"
+      },
       "check": {
         "_comment": "Makes the step auto-grade Implemented (all true) / Partial (some) / To-do (none). 'node' is read from your .bos; every predicate in 'all' is tested against it and shown with a checkmark/cross next to its 'label'.",
         "node": "Tasks\\Exact\\Node\\Path",

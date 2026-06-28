@@ -45,6 +45,12 @@
       "target": "Tasks\\Kylvatten anläggning tak 84000-CM1",
       "detail": "In the roof-cooling folder, right-click > Add > Program. Name it 'Stopp takpump vid läckage'.",
       "verify": "New Program 'Stopp takpump vid läckage' appears under Kylvatten anläggning tak 84000-CM1.",
+      "ui": {
+        "app": "Configurator",
+        "location": "Object tree > Tasks > Kylvatten anläggning tak 84000-CM1",
+        "action": "Right-click the folder > Add > Program, then rename it to 'Stopp takpump vid läckage'.",
+        "verify": "A new Program node 'Stopp takpump vid läckage' appears under the roof-cooling folder."
+      },
       "check": {
         "node": "Tasks\\Kylvatten anläggning tak 84000-CM1\\Stopp takpump vid läckage",
         "all": [
