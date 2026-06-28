@@ -32,13 +32,19 @@ pub struct ToolingInput {
 }
 
 /// One recommendation. `kind` is `"mcp"` (a server) or `"skill"` (an ECC skill),
-/// `name` is its identifier, and `reason` is the human-readable "why now". Serializes
-/// to a flat JSON object the renderer can list directly (mirrors `suggest::Suggestion`).
+/// `name` is its identifier, and `reason` is the human-readable "why now". `invoke`
+/// is a concrete, copy-pasteable "how to run it" hint for the human operator or the
+/// external agent runtime (a slash-command for a skill, or a server · tool pair for
+/// an MCP). It is *guidance only* — Hyperion never executes skills or MCP tools from
+/// Rust; that capability lives in the agent runtime outside the app. Serializes to a
+/// flat JSON object the renderer can list directly (mirrors `suggest::Suggestion`).
+/// The ordered list returned by [`recommend`] doubles as a step-by-step tool plan.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ToolRec {
     pub kind: &'static str,
     pub name: &'static str,
     pub reason: String,
+    pub invoke: &'static str,
 }
 
 // ---- trigger vocabularies (lowercased word tokens, matched via ingest::keywords) ----
@@ -142,9 +148,21 @@ const DATA_KINDS: &[&str] = &["csv", "tsv", "json", "xml", "yaml", "yml"];
 
 /// Push a recommendation unless one with the same `(kind, name)` is already present,
 /// so overlapping signals (e.g. a loaded `.bos` *and* an IoT question) yield one entry.
-fn push_unique(out: &mut Vec<ToolRec>, kind: &'static str, name: &'static str, reason: String) {
+/// `invoke` carries the concrete "how to run it" hint (see [`ToolRec::invoke`]).
+fn push_unique(
+    out: &mut Vec<ToolRec>,
+    kind: &'static str,
+    name: &'static str,
+    reason: String,
+    invoke: &'static str,
+) {
     if !out.iter().any(|r| r.kind == kind && r.name == name) {
-        out.push(ToolRec { kind, name, reason });
+        out.push(ToolRec {
+            kind,
+            name,
+            reason,
+            invoke,
+        });
     }
 }
 
@@ -180,6 +198,7 @@ pub fn recommend(input: &ToolingInput) -> Vec<ToolRec> {
             "skill",
             "comfortclick-bos",
             "A bOS configuration is loaded — lean on the ComfortClick / IoT building-automation skill for object, logic and Modbus/KNX guidance.".into(),
+            "/comfortclick-bos",
         );
     } else if has_term(IOT_TERMS) {
         push_unique(
@@ -187,6 +206,7 @@ pub fn recommend(input: &ToolingInput) -> Vec<ToolRec> {
             "skill",
             "comfortclick-bos",
             "The question is about building automation (Modbus/KNX/HVAC) — use the ComfortClick / IoT skill.".into(),
+            "/comfortclick-bos",
         );
     }
 
@@ -202,6 +222,7 @@ pub fn recommend(input: &ToolingInput) -> Vec<ToolRec> {
                 "{} context file(s) are loaded — a document-processing skill pulls tables and structured specs more reliably than plain text.",
                 docs.join("/").to_ascii_uppercase()
             ),
+            "/nutrient-document-processing",
         );
     }
 
@@ -217,6 +238,7 @@ pub fn recommend(input: &ToolingInput) -> Vec<ToolRec> {
                 "Structured data files ({}) are loaded — use a structured-text skill to parse them deterministically.",
                 data.join("/")
             ),
+            "/regex-vs-llm-structured-text",
         );
     }
 
@@ -228,6 +250,7 @@ pub fn recommend(input: &ToolingInput) -> Vec<ToolRec> {
             "rust-review",
             "This looks like a code question — reach for the code-review / rust-review skill."
                 .into(),
+            "/rust-review",
         );
     }
 
@@ -238,6 +261,7 @@ pub fn recommend(input: &ToolingInput) -> Vec<ToolRec> {
             "skill",
             "security-review",
             "The question touches secrets, auth or credentials — run it through the security-review skill.".into(),
+            "/security-review",
         );
     }
 
@@ -248,6 +272,7 @@ pub fn recommend(input: &ToolingInput) -> Vec<ToolRec> {
             "mcp",
             "firecrawl",
             "You're after live web pages or vendor docs — the Firecrawl MCP server can search and fetch them.".into(),
+            "firecrawl MCP · firecrawl_search / firecrawl_scrape",
         );
     }
 
@@ -258,6 +283,7 @@ pub fn recommend(input: &ToolingInput) -> Vec<ToolRec> {
             "mcp",
             "chrome-devtools",
             "This involves a browser/page — the Chrome DevTools MCP server can drive it and capture screenshots.".into(),
+            "chrome-devtools MCP · navigate_page / take_screenshot",
         );
     }
 
@@ -396,6 +422,31 @@ mod tests {
     fn recommendation_serializes_to_a_flat_json_object() {
         let recs = recommend(&input(true, &[], ""));
         let v = serde_json::to_value(&recs[0]).unwrap();
-        assert!(v.get("kind").is_some() && v.get("name").is_some() && v.get("reason").is_some());
+        assert!(
+            v.get("kind").is_some()
+                && v.get("name").is_some()
+                && v.get("reason").is_some()
+                && v.get("invoke").is_some()
+        );
+    }
+
+    #[test]
+    fn every_recommendation_carries_an_actionable_invoke_hint() {
+        // A broad context that fires several branches; every emitted rec must carry a
+        // concrete, non-empty "how to run it" hint so the ordered list reads as a plan.
+        let recs = recommend(&input(
+            true,
+            &["pdf", "csv"],
+            "review this Rust code, check the API token, and search the web for the datasheet in the browser",
+        ));
+        assert!(recs.len() >= 5, "expected several recs, got: {recs:?}");
+        for r in &recs {
+            assert!(!r.invoke.trim().is_empty(), "blank invoke for {:?}", r.name);
+        }
+        // Skills surface as a slash-command; MCP servers name the server.
+        let bos = recs.iter().find(|r| r.name == "comfortclick-bos").unwrap();
+        assert_eq!(bos.invoke, "/comfortclick-bos");
+        let fc = recs.iter().find(|r| r.name == "firecrawl").unwrap();
+        assert!(fc.invoke.contains("firecrawl"), "got: {}", fc.invoke);
     }
 }

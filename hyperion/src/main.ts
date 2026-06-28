@@ -61,6 +61,10 @@ const api = {
   wikiGet:  (slug) => invoke("wiki_get", { slug }),         // null when no such page
   wikiSave: (slug, title, html) => invoke("wiki_save", { slug, title, html }),
 
+  // bundled HTML-effectiveness artifact templates (src-tauri/src/artifacts.rs)
+  artifactTemplatesList: () => invoke("artifact_templates_list"), // [{key,label,description}]
+  artifactTemplateGet:   (key) => invoke("artifact_template_get", { key }), // {key,html}
+
   // project collaboration: pull requests + timeline + snapshot diff (src-tauri/src/collab.rs, lib.rs)
   prList:       () => invoke("pr_list"),
   prCreate:     (title, narrative, aiDocs) => invoke("pr_create", { title, narrative, aiDocs }),
@@ -543,7 +547,7 @@ async function refreshToolHints(){
   if(!recs.length){ el.innerHTML=''; el.style.display='none'; return; }
   el.style.display='';
   el.innerHTML='<span class="atoolslbl">Suggested tools</span>'
-    + recs.map(r=>'<span class="atoolchip '+esc(r.kind)+'" title="'+esc(r.reason)+'">'
+    + recs.map(r=>'<span class="atoolchip '+esc(r.kind)+'" title="'+esc(r.reason)+(r.invoke?' → '+r.invoke:'')+'">'
         +'<span class="atoolkind">'+esc(r.kind)+'</span>'+esc(r.name)+'</span>').join('');
 }
 // Minimal renderer: escape everything, then turn ``` fenced blocks into <pre>.
@@ -873,7 +877,39 @@ async function saveWikiPage(){
   }catch(e){ alert('Save page failed: '+e); $('#wikistatus').textContent=''; }
   finally{ btn.disabled=false; btn.textContent='Save page'; }
 }
-function openWiki(){ $('#wiki').classList.add('on'); refreshWikiList(); }
+// ---------- artifact templates (Track 4; artifacts.rs) ----------
+// A pickable library of the bundled HTML-effectiveness patterns. The catalog is
+// static (compiled into the binary), so it's fetched once and cached on the select.
+// "Insert template" drops the chosen pattern's full, themeable HTML into the editor
+// as a starting point; the operator edits it and Saves (which still runs the
+// plaintext-secret guard + length check in wiki_save). Advisory only — no execution.
+async function refreshWikiTemplates(){
+  const sel=$('#wikitpl'); if(!sel || sel.dataset.loaded) return;
+  let tpls=[];
+  try{ tpls=await api.artifactTemplatesList(); }catch(e){ tpls=[]; }
+  if(!tpls.length) return;
+  sel.innerHTML='<option value="">- artifact template -</option>'
+    + tpls.map(t=>'<option value="'+esc(t.key)+'" title="'+esc(t.description)+'">'+esc(t.label)+'</option>').join('');
+  sel.dataset.loaded='1';
+}
+async function insertWikiTemplate(){
+  const sel=$('#wikitpl'); const key=sel && sel.value; if(!key){ return; }
+  const ta=$('#wikihtml'); if(!ta) return;
+  let res=null;
+  try{ res=await api.artifactTemplateGet(key); }catch(e){ alert('Load template failed: '+e); return; }
+  const html=(res && res.html)||'';
+  if(!html){ return; }
+  const cur=ta.value;
+  if(!cur.trim()){
+    ta.value=html;                                    // empty editor: the template becomes the page
+  }else{
+    const s=ta.selectionStart ?? cur.length, e=ta.selectionEnd ?? cur.length;
+    ta.value=cur.slice(0,s)+html+cur.slice(e);        // otherwise splice at the cursor
+  }
+  ta.focus();
+  $('#wikistatus').textContent='Inserted the "'+key+'" template — edit and Save.';
+}
+function openWiki(){ $('#wiki').classList.add('on'); refreshWikiList(); refreshWikiTemplates(); }
 function closeWiki(){ $('#wiki').classList.remove('on'); }
 
 // ---------- project: PRs, timeline & snapshot diff (Group A; collab.rs + lib.rs) ----------
@@ -1248,10 +1284,18 @@ async function runRecommend(){
   let recs=[];
   try{ recs=await api.recommendTools(q); }catch(e){ kqErr(out,e); return; }
   if(!recs.length){ out.innerHTML='<div class="mut" style="font-size:12px;padding:4px 2px">No recommendations for the current context.</div>'; return; }
-  out.innerHTML=recs.map(r=>'<div class="amemitem"><div class="mtop">'
+  // The list is already in domain-priority order, so reading it top-to-bottom is the
+  // suggested tool plan. Each item shows a copy-pasteable "how to run it" hint
+  // (slash-command / MCP server·tool) for the operator or the external agent runtime
+  // — Hyperion does not execute skills or MCP tools itself; this is guidance only.
+  out.innerHTML='<div class="mut" style="font-size:11px;padding:0 2px 4px">Suggested tool plan, in order &mdash; run each in your agent runtime (advisory; Hyperion does not auto-run them).</div>'
+    +recs.map((r,i)=>'<div class="amemitem"><div class="mtop">'
+    +'<span class="mut" style="font-size:11px;font-family:Consolas,ui-monospace,monospace;margin-right:6px">'+(i+1)+'.</span>'
     +'<span class="actxkind '+esc(r.kind)+'">'+esc(r.kind)+'</span>'
     +'<span class="mslug">'+esc(r.name)+'</span></div>'
-    +'<div class="mbody">'+esc(r.reason)+'</div></div>').join('');
+    +'<div class="mbody">'+esc(r.reason)+'</div>'
+    +(r.invoke?'<div class="mbody" style="font-family:Consolas,ui-monospace,monospace;font-size:11.5px;color:var(--acc);margin-top:3px">'+esc(r.invoke)+'</div>':'')
+    +'</div>').join('');
 }
 
 // ----- wiki export to a chosen folder (export.rs) -----
@@ -1385,6 +1429,7 @@ async function init(){
   $('#wikibtn').onclick=openWiki;
   $('#wikilist').onchange=e=>loadWikiPage(e.target.value);
   $('#wikinew').onclick=newWikiPage;
+  $('#wikitplins').onclick=insertWikiTemplate;
   $('#wikisave').onclick=saveWikiPage;
   $('#wiki').addEventListener('click',e=>{ if(e.target.id==='wiki') closeWiki(); });
 
