@@ -96,6 +96,95 @@ pub fn get(key: &str) -> Result<&'static str, String> {
         .ok_or_else(|| format!("unknown artifact template: {key:?}"))
 }
 
+// ----------------------------- live guide derivation (pure) -----------------------------
+//
+// The bundled templates embody the "match the artifact to the shape of the information"
+// ideas catalogued at https://thariqs.github.io/html-effectiveness/. These pure helpers
+// let the app refresh the *guidance around* the templates from that live source: a
+// fetched-and-stripped guide page is distilled into a per-technique "use when…" note
+// (the embedded template HTML is never touched). The fetch/network edge lives in
+// `crawler.rs`; everything here is deterministic and unit-tested with synthetic text.
+
+/// One derived "use when…" guidance note for a bundled template, distilled from the
+/// live html-effectiveness guide. `key`/`label` identify the template; `guidance` is
+/// the sentence the guide offered for when that information shape fits. Serializes to a
+/// flat object the refresh command reports.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct GuideNote {
+    pub key: &'static str,
+    pub label: &'static str,
+    pub guidance: String,
+}
+
+/// The cue word that anchors a template to a sentence in the guide text: the first
+/// segment of its `key` (e.g. `comparison-table` -> `comparison`, `faq` -> `faq`).
+/// Each catalog key has a distinct leading segment, so this gives a stable per-technique
+/// probe without maintaining a second hand-written list alongside `TEMPLATES`.
+fn guide_cue(key: &str) -> &str {
+    key.split('-').next().unwrap_or(key)
+}
+
+/// Derive a per-technique "use when…" note from the (already tag-stripped) html-
+/// effectiveness guide text. Pure and deterministic: splits the guide into sentences
+/// and, for each bundled template, records the FIRST sentence whose text mentions that
+/// template's cue word ([`guide_cue`]) as its guidance. A template the guide never
+/// mentions yields no note (guidance is distilled, never invented), so the result lists
+/// only the techniques the source actually covers. No network, no I/O.
+pub fn derive_guide_notes(guide_text: &str) -> Vec<GuideNote> {
+    let sentences: Vec<&str> = guide_text
+        .split(['.', '!', '?'])
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+    let mut out = Vec::new();
+    for t in TEMPLATES {
+        let cue = guide_cue(t.key).to_ascii_lowercase();
+        if cue.is_empty() {
+            continue;
+        }
+        if let Some(sentence) = sentences
+            .iter()
+            .find(|s| s.to_ascii_lowercase().contains(&cue))
+        {
+            out.push(GuideNote {
+                key: t.key,
+                label: t.label,
+                guidance: cap_chars(sentence, 240),
+            });
+        }
+    }
+    out
+}
+
+/// Truncate `s` to at most `max` characters on a char boundary, appending an ellipsis
+/// when it was cut, so one runaway sentence can't bloat the stored note.
+fn cap_chars(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    let mut t: String = s.chars().take(max).collect();
+    t.push('…');
+    t
+}
+
+/// Render derived `notes` into a single project-knowledge body: a short header plus one
+/// "Use when:" line per technique. Stored verbatim via the crawler's project-knowledge
+/// storage so the guide's guidance is searchable in-app alongside the templates. Pure
+/// and deterministic.
+pub fn format_guide_knowledge(notes: &[GuideNote]) -> String {
+    let mut s = String::from(
+        "HTML-effectiveness artifact guide — when to use each bundled template \
+         (refreshed from https://thariqs.github.io/html-effectiveness/).\n",
+    );
+    for n in notes {
+        s.push_str(&format!(
+            "\n## {} ({})\nUse when: {}\n",
+            n.label, n.key, n.guidance
+        ));
+    }
+    s
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -150,6 +239,62 @@ mod tests {
         keys.sort_unstable();
         keys.dedup();
         assert_eq!(keys.len(), n, "duplicate template keys");
+    }
+
+    #[test]
+    fn derive_guide_notes_extracts_use_when_per_technique() {
+        // A synthetic guide page (post tag-strip) mentioning three of the bundled
+        // techniques and one irrelevant sentence.
+        let text = "Comparison tables shine when you must weigh options across several criteria. \
+                    A playbook is the right choice when the reader will execute a procedure step by step. \
+                    An FAQ accordion is best when most readers want only one answer. \
+                    This unrelated sentence mentions nothing pickable.";
+        let notes = derive_guide_notes(text);
+        let by_key: std::collections::HashMap<&str, &str> =
+            notes.iter().map(|n| (n.key, n.guidance.as_str())).collect();
+
+        // Each covered technique gets the FIRST sentence that named its cue word.
+        assert!(by_key
+            .get("comparison-table")
+            .unwrap()
+            .contains("weigh options across several criteria"));
+        assert!(by_key
+            .get("playbook")
+            .unwrap()
+            .contains("execute a procedure step by step"));
+        assert!(by_key.get("faq").unwrap().contains("only one answer"));
+        // A technique the guide never mentions is not invented.
+        assert!(by_key.get("callout").is_none());
+        // The derived label tracks the catalog.
+        let faq = notes.iter().find(|n| n.key == "faq").unwrap();
+        assert_eq!(faq.label, "FAQ Accordion");
+    }
+
+    #[test]
+    fn derive_guide_notes_empty_when_nothing_matches() {
+        assert!(derive_guide_notes("totally unrelated prose about nothing here").is_empty());
+        assert!(derive_guide_notes("").is_empty());
+    }
+
+    #[test]
+    fn format_guide_knowledge_lists_each_technique_with_use_when() {
+        let notes =
+            derive_guide_notes("A playbook is ideal when a procedure must be followed in order.");
+        let body = format_guide_knowledge(&notes);
+        assert!(body.contains("HTML-effectiveness artifact guide"));
+        assert!(body.contains("Step-by-step Playbook"));
+        assert!(body.contains("(playbook)"));
+        assert!(body.contains("Use when:"));
+    }
+
+    #[test]
+    fn derive_guide_notes_caps_long_guidance() {
+        // A single very long "playbook" sentence is truncated with an ellipsis.
+        let long = format!("A playbook helps {} now", "x".repeat(400));
+        let notes = derive_guide_notes(&long);
+        let g = &notes.iter().find(|n| n.key == "playbook").unwrap().guidance;
+        assert!(g.chars().count() <= 241, "len {}", g.chars().count());
+        assert!(g.ends_with('…'));
     }
 
     #[test]

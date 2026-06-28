@@ -816,6 +816,72 @@ fn artifact_template_get(key: String) -> Result<Value, String> {
     Ok(json!({ "key": key, "html": html }))
 }
 
+/// The canonical html-effectiveness guide the bundled templates are distilled from;
+/// `artifact_guide_refresh` re-derives the per-technique "use when…" guidance from this
+/// live source.
+const ARTIFACT_GUIDE_URL: &str = "https://thariqs.github.io/html-effectiveness/";
+
+/// Refresh the artifact-template *guidance* from its live source — additive and
+/// optional. Firecrawls the html-effectiveness guide (reusing the existing
+/// `crawler::fetch` Firecrawl/GET path, never re-implementing HTTP), strips it to text
+/// via `crawler::extract_text`, derives a per-technique "use when…" note
+/// (`artifacts::derive_guide_notes`), and caches the distilled notes as project
+/// knowledge via the crawler's `crawl_store` (keyed by the guide URL, secret-scanned
+/// there) so the guidance is searchable in-app next to the templates. The embedded
+/// template HTML is never touched.
+///
+/// Graceful no-op: when no `HYPERION_FIRECRAWL_API_KEY` is configured, or the fetch
+/// fails, it returns `{refreshed:false, reason}` rather than erroring — the feature is
+/// optional and the app never requires the key. Requires an open project (it stores
+/// per-project knowledge), same contract as the other `crawl_*` commands.
+#[tauri::command]
+async fn artifact_guide_refresh(projects: State<'_, Mutex<Projects>>) -> Result<Value, String> {
+    // Optional feature: the refresh needs a Firecrawl key. Absent -> clear no-op, not an
+    // error, so the app never requires the key (checked before requiring a project so the
+    // message is always reachable).
+    if !crawler::firecrawl_configured() {
+        return Ok(json!({
+            "refreshed": false,
+            "reason": "set HYPERION_FIRECRAWL_API_KEY to refresh the artifact guide from source (this feature is optional)",
+        }));
+    }
+    let db = active_project_db(&projects)?;
+    // The network fetch + HTML strip run on the blocking pool (mirrors `crawl_add`) so a
+    // slow/unreachable host can't stall the async event loop.
+    tauri::async_runtime::spawn_blocking(move || {
+        let html = match crawler::fetch(ARTIFACT_GUIDE_URL) {
+            Ok(h) => h,
+            // A failed fetch is non-fatal: report the (already redacted) reason.
+            Err(e) => return Ok(json!({ "refreshed": false, "reason": e })),
+        };
+        let (_title, text) = crawler::extract_text(&html);
+        let notes = artifacts::derive_guide_notes(&text);
+        if notes.is_empty() {
+            return Ok(json!({
+                "refreshed": false,
+                "reason": "the guide page had no recognizable per-technique guidance",
+            }));
+        }
+        let body = artifacts::format_guide_knowledge(&notes);
+        let id = projects::crawl_store(
+            &db,
+            ARTIFACT_GUIDE_URL,
+            Some("HTML-effectiveness artifact guide"),
+            &body,
+            Some("artifact-guide"),
+        )?;
+        let techniques: Vec<&str> = notes.iter().map(|n| n.label).collect();
+        Ok(json!({
+            "refreshed": true,
+            "id": id,
+            "count": notes.len(),
+            "techniques": techniques,
+        }))
+    })
+    .await
+    .map_err(|e| format!("artifact guide refresh task failed: {e}"))?
+}
+
 // ----------------------------- roster commands (M5) -----------------------------
 //
 // The agent roster + versioned instincts (roster.rs). Listing the roster works
@@ -2236,6 +2302,7 @@ pub fn run() {
             wiki_export,
             artifact_templates_list,
             artifact_template_get,
+            artifact_guide_refresh,
             agent_roster,
             agent_instincts_get,
             agent_instincts_set,

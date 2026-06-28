@@ -389,6 +389,14 @@ fn firecrawl_key() -> Option<String> {
     }
 }
 
+/// True when a Firecrawl API key is configured (`HYPERION_FIRECRAWL_API_KEY` set and
+/// non-blank). A thin public probe over the private [`firecrawl_key`] gate so callers
+/// (e.g. the artifact-guide refresh) can give a clear "set the key" no-op message
+/// without forcing a fetch. Never reveals the key itself.
+pub fn firecrawl_configured() -> bool {
+    firecrawl_key().is_some()
+}
+
 /// Fetch the raw HTML at `url` over a single capped, timed `GET`. Disabled by
 /// default: without `HYPERION_CRAWL_ENABLED` set truthy this returns `Err` before
 /// touching the network (so CI/offline stays green). Only `http(s)` URLs are allowed
@@ -822,6 +830,27 @@ mod tests {
 
         std::env::set_var("HYPERION_FIRECRAWL_API_KEY", "  fc-secret  ");
         assert_eq!(firecrawl_key(), Some("fc-secret".to_string()));
+
+        match prev {
+            Some(p) => std::env::set_var("HYPERION_FIRECRAWL_API_KEY", p),
+            None => std::env::remove_var("HYPERION_FIRECRAWL_API_KEY"),
+        }
+    }
+
+    #[test]
+    fn firecrawl_configured_reflects_key_presence() {
+        // The no-key gate the artifact-guide refresh uses for its graceful no-op.
+        let _env = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let prev = std::env::var("HYPERION_FIRECRAWL_API_KEY").ok();
+
+        std::env::remove_var("HYPERION_FIRECRAWL_API_KEY");
+        assert!(!firecrawl_configured());
+
+        std::env::set_var("HYPERION_FIRECRAWL_API_KEY", "   ");
+        assert!(!firecrawl_configured(), "blank key is not configured");
+
+        std::env::set_var("HYPERION_FIRECRAWL_API_KEY", "fc-secret");
+        assert!(firecrawl_configured());
 
         match prev {
             Some(p) => std::env::set_var("HYPERION_FIRECRAWL_API_KEY", p),

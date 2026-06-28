@@ -64,6 +64,7 @@ const api = {
   // bundled HTML-effectiveness artifact templates (src-tauri/src/artifacts.rs)
   artifactTemplatesList: () => invoke("artifact_templates_list"), // [{key,label,description}]
   artifactTemplateGet:   (key) => invoke("artifact_template_get", { key }), // {key,html}
+  artifactGuideRefresh:  () => invoke("artifact_guide_refresh"),  // {refreshed,reason?|id,count,techniques}
 
   // project collaboration: pull requests + timeline + snapshot diff (src-tauri/src/collab.rs, lib.rs)
   prList:       () => invoke("pr_list"),
@@ -958,6 +959,25 @@ async function insertWikiTemplate(){
   ta.focus();
   $('#wikistatus').textContent='Inserted the "'+key+'" template — edit and Save.';
 }
+// Refresh the templates' "use when…" guidance live from the html-effectiveness guide
+// (artifact_guide_refresh). Optional + non-fatal: with no HYPERION_FIRECRAWL_API_KEY,
+// or on a failed fetch, the backend returns {refreshed:false, reason} which we just
+// surface in the status line. The bundled template HTML is never altered; the derived
+// notes are stored as project knowledge (so it needs an open project).
+async function refreshArtifactGuide(){
+  const btn=$('#wikitplrefresh');
+  if(btn){ btn.disabled=true; btn.textContent='Refreshing…'; }
+  try{
+    const res=await api.artifactGuideRefresh();
+    if(res && res.refreshed){
+      const techs=(res.techniques||[]).join(', ');
+      $('#wikistatus').textContent='Refreshed artifact guide — saved '+(res.count||0)+' technique note(s) to project knowledge'+(techs?(': '+techs):'')+'.';
+    }else{
+      $('#wikistatus').textContent=(res && res.reason) ? res.reason : 'Guide refresh did nothing.';
+    }
+  }catch(e){ $('#wikistatus').textContent='Guide refresh failed: '+e; }
+  finally{ if(btn){ btn.disabled=false; btn.textContent='Refresh guide'; } }
+}
 function openWiki(){ $('#wiki').classList.add('on'); refreshWikiList(); refreshWikiTemplates(); }
 function closeWiki(){ $('#wiki').classList.remove('on'); }
 
@@ -1528,6 +1548,7 @@ async function init(){
   $('#wikilist').onchange=e=>loadWikiPage(e.target.value);
   $('#wikinew').onclick=newWikiPage;
   $('#wikitplins').onclick=insertWikiTemplate;
+  $('#wikitplrefresh').onclick=refreshArtifactGuide;
   $('#wikisave').onclick=saveWikiPage;
   $('#wiki').addEventListener('click',e=>{ if(e.target.id==='wiki') closeWiki(); });
 
