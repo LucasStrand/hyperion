@@ -31,7 +31,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use serde_json::{json, Value};
-use tauri::State;
+use tauri::{Manager, State};
 
 use entra::Auth;
 use projects::Projects;
@@ -361,17 +361,70 @@ fn get_playbook(name: String, state: State<'_, Mutex<Store>>) -> Result<Value, S
     serde_json::from_str(&text).map_err(|e| format!("{e}"))
 }
 
-/// Run bos_explore.py on a .bos file, writing `out_json`, and return its nodes.
-fn run_parser(workspace: &Path, bos_path: &str, out_json: &Path) -> Result<Vec<Value>, String> {
-    let script = workspace.join("bos_explore.py");
-    let status = std::process::Command::new("python")
-        .arg(&script)
+/// Locate the bundled `bos_explore.py`. In a packaged installer the script ships
+/// in the Tauri resource dir; in `cargo tauri dev` it sits next to the workspace.
+/// Prefer the resource copy, fall back to `<workspace>/bos_explore.py`.
+fn resolve_parser_script(app: &tauri::AppHandle, workspace: &Path) -> PathBuf {
+    if let Ok(res) = app
+        .path()
+        .resolve("bos_explore.py", tauri::path::BaseDirectory::Resource)
+    {
+        if res.exists() {
+            return res;
+        }
+    }
+    workspace.join("bos_explore.py")
+}
+
+/// Find a usable Python 3 interpreter on PATH (`python`, then `python3`, then the
+/// Windows `py` launcher). Returns the command name, or a clear prerequisite
+/// message the UI surfaces verbatim. Goes away once `.bos` parsing is ported to
+/// pure Rust (tracked as A0b).
+fn detect_python() -> Result<String, String> {
+    for cand in ["python", "python3", "py"] {
+        let ok = std::process::Command::new(cand)
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if ok {
+            return Ok(cand.to_string());
+        }
+    }
+    Err(
+        "Python 3 is required to import .bos files but was not found on PATH. \
+         Install Python 3 from https://python.org, then run `pip install nrbf`, \
+         and restart Hyperion. (This prerequisite is removed in a later release.)"
+            .to_string(),
+    )
+}
+
+/// Run `bos_explore.py` on a `.bos` file, writing `out_json`, and return its nodes.
+/// `script` is the resolved parser path (resource dir in production); `work_dir`
+/// is the current dir for the child process.
+fn run_parser(
+    script: &Path,
+    work_dir: &Path,
+    bos_path: &str,
+    out_json: &Path,
+) -> Result<Vec<Value>, String> {
+    let python = detect_python()?;
+    if !script.exists() {
+        return Err(format!(
+            "bundled parser not found at {} — the install may be corrupt",
+            script.display()
+        ));
+    }
+    let status = std::process::Command::new(&python)
+        .arg(script)
         .arg(bos_path)
         .arg("--json")
         .arg(out_json)
-        .current_dir(workspace)
+        .current_dir(work_dir)
         .status()
-        .map_err(|e| format!("failed to launch python: {e}"))?;
+        .map_err(|e| format!("failed to launch {python}: {e}"))?;
     if !status.success() {
         return Err(format!("bos_explore.py exited with {status}"));
     }
@@ -394,14 +447,19 @@ fn file_name_of(path: &str) -> String {
 /// `open_project` could interleave. Harmless in this single-operator desktop
 /// app (the UI never fires both at once); revisit if parsing moves off the UI.
 #[tauri::command]
-fn parse_bos(path: String, state: State<'_, Mutex<Store>>) -> Result<Value, String> {
+fn parse_bos(
+    app: tauri::AppHandle,
+    path: String,
+    state: State<'_, Mutex<Store>>,
+) -> Result<Value, String> {
     let workspace = state
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .workspace
         .clone();
     let out_json = workspace.join("bos_map.json");
-    let nodes = run_parser(&workspace, &path, &out_json)?;
+    let script = resolve_parser_script(&app, &workspace);
+    let nodes = run_parser(&script, &workspace, &path, &out_json)?;
     let config_name = file_name_of(&path);
     let mut s = state.lock().unwrap_or_else(|e| e.into_inner());
     *s = build_store_from_nodes(workspace, config_name, nodes);
@@ -500,6 +558,7 @@ fn open_project(
 /// Parse a `.bos` into the active project as a new snapshot and render it.
 #[tauri::command]
 fn import_bos(
+    app: tauri::AppHandle,
     path: String,
     label: Option<String>,
     projects: State<'_, Mutex<Projects>>,
@@ -520,7 +579,8 @@ fn import_bos(
         .unwrap_or_else(|e| e.into_inner())
         .workspace
         .clone();
-    let nodes = run_parser(&workspace, &path, &out_json)?;
+    let script = resolve_parser_script(&app, &workspace);
+    let nodes = run_parser(&script, &workspace, &path, &out_json)?;
     let fname = file_name_of(&path);
     let label = label.unwrap_or_else(|| fname.clone());
     let nodes_val = Value::Array(nodes.clone());

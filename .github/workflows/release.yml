@@ -1,0 +1,75 @@
+name: Release
+
+# Build the Windows installer and publish a GitHub Release whenever a v* tag is
+# pushed (e.g. `git tag v1.0.0 && git push origin v1.0.0`). The release-gating CI
+# (ci.yml) stays the quality gate on PRs/main; this workflow only packages tags.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+# tauri-action needs write access to create the Release and upload the installer.
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows-installer:
+    name: Windows installer
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Install Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: hyperion/package-lock.json
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: hyperion/src-tauri
+
+      - name: Install frontend dependencies
+        working-directory: hyperion
+        run: npm ci
+
+      # tauri-action runs `npm run tauri build`, then creates the GitHub Release
+      # for the pushed tag and uploads the NSIS .exe / .msi from
+      # hyperion/src-tauri/target/release/bundle/.
+      - name: Build installer and publish release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: hyperion
+          tagName: ${{ github.ref_name }}
+          releaseName: "Hyperion ${{ github.ref_name }}"
+          releaseDraft: true
+          prerelease: false
+          releaseBody: |
+            Hyperion ${{ github.ref_name }} — Windows desktop build for ComfortClick bOS.
+
+            ### Install
+            Download the `.exe` (NSIS) or `.msi` installer below and run it.
+
+            ### Prerequisite (temporary)
+            Importing a `.bos` config currently requires **Python 3** on PATH plus
+            `pip install nrbf`. Install Python from https://python.org, run
+            `pip install nrbf`, then launch Hyperion. This prerequisite is removed
+            in a later release once `.bos` parsing is ported to pure Rust.
+
+            bOS access is **read-only** by default; restore/reset procedures are
+            documented in-app. No credentials are bundled in this build.
