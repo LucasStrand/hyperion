@@ -966,12 +966,51 @@ fn crawl_delete(id: i64, projects: State<'_, Mutex<Projects>>) -> Result<bool, S
 #[tauri::command]
 fn crawl_eureka(projects: State<'_, Mutex<Projects>>) -> Result<Vec<Value>, String> {
     let db = active_project_db(&projects)?;
-    let docs = projects::crawl_load_for_eureka(&db)?;
-    let terms = active_context_terms(&db);
-    crawler::eureka(&docs, &terms)
+    active_eureka_suggestions(&db)?
         .iter()
         .map(|s| serde_json::to_value(s).map_err(|e| format!("serialize eureka: {e}")))
         .collect()
+}
+
+/// Compute the active project's current eureka `Suggestion`s: cached crawl docs vs.
+/// the loaded context terms. The single place the gather-and-rank step lives, shared
+/// by `crawl_eureka` (which serializes the suggestions) and `crawl_eureka_propose_pr`
+/// (which formats them into a PR), so neither command duplicates the logic.
+fn active_eureka_suggestions(db: &Path) -> Result<Vec<crawler::Suggestion>, String> {
+    let docs = projects::crawl_load_for_eureka(db)?;
+    let terms = active_context_terms(db);
+    Ok(crawler::eureka(&docs, &terms))
+}
+
+/// Close the knowledge loop: compute the active project's eureka findings and, when any
+/// are novel, draft them into a human-approvable in-app pull request via
+/// `collab::pr_create` (a human `narrative` + machine-readable `ai_docs`). Returns
+/// `{created: true, pr_id, title, count}` on success. When nothing is novel it returns
+/// `{created: false, reason}` WITHOUT opening an empty PR. `pr_create` secret-scans
+/// every field, so a finding that somehow embedded a secret is rejected there exactly
+/// as any other PR would be. Read-only toward bOS.
+#[tauri::command]
+fn crawl_eureka_propose_pr(projects: State<'_, Mutex<Projects>>) -> Result<Value, String> {
+    let db = active_project_db(&projects)?;
+    let suggestions = active_eureka_suggestions(&db)?;
+    let Some(draft) = crawler::format_proposal(&suggestions) else {
+        return Ok(json!({
+            "created": false,
+            "reason": "nothing novel to propose — the crawled docs add no terms beyond your loaded project context",
+        }));
+    };
+    let pr_id = collab::pr_create(
+        &db,
+        &draft.title,
+        Some(&draft.narrative),
+        Some(&draft.ai_docs),
+    )?;
+    Ok(json!({
+        "created": true,
+        "pr_id": pr_id,
+        "title": draft.title,
+        "count": draft.count,
+    }))
 }
 
 // ----------------------------- collab: PRs + timeline (M8) -----------------------------
@@ -1985,6 +2024,7 @@ pub fn run() {
             crawl_get,
             crawl_delete,
             crawl_eureka,
+            crawl_eureka_propose_pr,
             pr_list,
             pr_create,
             pr_get,

@@ -141,6 +141,106 @@ fn is_priority(term: &str) -> bool {
     PRIORITY_TERMS.contains(&term)
 }
 
+// ----------------------------- eureka -> PR proposal (pure) -----------------------------
+
+/// A human-approvable in-app PR drafted from eureka `Suggestion`s. `title` is the
+/// list-view one-liner ("Knowledge proposal: N findings from crawl"); `narrative` is
+/// the human-readable case (what was discovered, why it matters, a suggested next
+/// action per finding — phrased so an operator approves or rejects it); `ai_docs` is
+/// the structured, machine-readable list of the same findings (each novel term + its
+/// source doc + weight). `count` is the number of findings. Built by `format_proposal`
+/// and handed straight to `collab::pr_create`, which secret-scans every field before
+/// it lands in the project DB.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ProposalDraft {
+    pub title: String,
+    pub narrative: String,
+    pub ai_docs: String,
+    pub count: usize,
+}
+
+/// Format eureka `suggestions` into a human-approvable `ProposalDraft`, or `None` when
+/// there is nothing novel to propose (an empty slice) so the caller reports "nothing
+/// to propose" instead of opening an empty PR. The narrative and ai_docs are a direct,
+/// ordered rendering of the input — fully deterministic, no network, no I/O — so the
+/// formatting is unit-tested with synthetic suggestions. The order of `suggestions` is
+/// preserved (the caller passes them already ranked by `eureka`).
+pub fn format_proposal(suggestions: &[Suggestion]) -> Option<ProposalDraft> {
+    if suggestions.is_empty() {
+        return None;
+    }
+    let count = suggestions.len();
+    let title = format!(
+        "Knowledge proposal: {count} finding{} from crawl",
+        plural(count)
+    );
+    Some(ProposalDraft {
+        title,
+        narrative: proposal_narrative(suggestions),
+        ai_docs: proposal_ai_docs(suggestions),
+        count,
+    })
+}
+
+/// `""` for one, `"s"` otherwise — keeps the proposal copy grammatical.
+fn plural(n: usize) -> &'static str {
+    if n == 1 {
+        ""
+    } else {
+        "s"
+    }
+}
+
+/// The human-readable case for the proposal: a short framing paragraph, then one
+/// numbered finding per suggestion with a concrete "review and, if relevant, ground
+/// the assistant on it" next action. Phrased as a proposal the operator approves or
+/// rejects; nothing here is applied to bOS.
+fn proposal_narrative(suggestions: &[Suggestion]) -> String {
+    let count = suggestions.len();
+    let mut out = format!(
+        "The knowledge crawler compared this project's cached crawl docs against the \
+         assistant's loaded context and surfaced {count} term{} that appear in the docs \
+         but are not grounded in the project yet. This is a proposal for review: approve \
+         the finding{} worth pursuing and reject the rest. Nothing here is written back \
+         to bOS.\n\nFindings:\n",
+        plural(count),
+        plural(count)
+    );
+    for (i, s) in suggestions.iter().enumerate() {
+        let pillar = if is_priority(&s.term) {
+            " (bOS pillar term)"
+        } else {
+            ""
+        };
+        out.push_str(&format!(
+            "\n{}. \"{}\"{} — seen in crawled doc \"{}\" (weight {}).\n   \
+             Suggested next action: review \"{}\" in that source and, if relevant, add it \
+             to the project context (a memory note or context file) so the assistant is \
+             grounded on it.\n",
+            i + 1,
+            s.term,
+            pillar,
+            s.source,
+            s.weight,
+            s.term,
+        ));
+    }
+    out
+}
+
+/// The structured, machine-readable side of the proposal: a stable JSON document
+/// listing each finding (novel `term`, its `source` doc, and `weight`). Pretty-printed
+/// for human-legibility in the PR's AI-docs pane. The plain fields never fail to
+/// serialize, but a debug fallback keeps the proposal non-empty if it ever did.
+fn proposal_ai_docs(suggestions: &[Suggestion]) -> String {
+    serde_json::to_string_pretty(&serde_json::json!({
+        "kind": "crawl-eureka-proposal",
+        "count": suggestions.len(),
+        "findings": suggestions,
+    }))
+    .unwrap_or_else(|_| format!("{suggestions:?}"))
+}
+
 // ----------------------------- HTML extraction (pure) -----------------------------
 
 /// Reduce an HTML page to `(title, text)`: the `<title>` contents (or empty) and the
@@ -541,6 +641,101 @@ mod tests {
         assert_eq!(alpha.source, "A");
         // Result never exceeds the cap.
         assert!(s.len() <= MAX_SUGGESTIONS);
+    }
+
+    #[test]
+    fn format_proposal_renders_narrative_and_structured_ai_docs() {
+        // Two findings, a bOS pillar term first (as `eureka` would rank it).
+        let suggestions = vec![
+            Suggestion {
+                term: "configurator".to_string(),
+                weight: PRIORITY_BOOST + 1,
+                source: "Modbus Guide".to_string(),
+                message: "ignored by the formatter".to_string(),
+            },
+            Suggestion {
+                term: "scenes".to_string(),
+                weight: 1,
+                source: "KNX Notes".to_string(),
+                message: "ignored by the formatter".to_string(),
+            },
+        ];
+        let draft = format_proposal(&suggestions).expect("non-empty -> Some draft");
+
+        // Title states the count.
+        assert_eq!(draft.title, "Knowledge proposal: 2 findings from crawl");
+        assert_eq!(draft.count, 2);
+
+        // Narrative names each term, its source doc, a per-finding next action, and
+        // flags the pillar term — and is framed as an approve/reject proposal.
+        assert!(
+            draft.narrative.contains("proposal for review"),
+            "{}",
+            draft.narrative
+        );
+        assert!(
+            draft.narrative.contains("\"configurator\""),
+            "{}",
+            draft.narrative
+        );
+        assert!(
+            draft.narrative.contains("(bOS pillar term)"),
+            "{}",
+            draft.narrative
+        );
+        assert!(
+            draft.narrative.contains("Modbus Guide"),
+            "{}",
+            draft.narrative
+        );
+        assert!(
+            draft.narrative.contains("\"scenes\""),
+            "{}",
+            draft.narrative
+        );
+        assert!(draft.narrative.contains("KNX Notes"), "{}", draft.narrative);
+        assert!(
+            draft.narrative.contains("Suggested next action"),
+            "{}",
+            draft.narrative
+        );
+
+        // ai_docs is structured/machine-readable: parse it back and check the findings
+        // carry term + source + weight in the same (ranked) order.
+        let v: serde_json::Value = serde_json::from_str(&draft.ai_docs).expect("ai_docs is JSON");
+        assert_eq!(v["kind"], "crawl-eureka-proposal");
+        assert_eq!(v["count"], 2);
+        let findings = v["findings"].as_array().expect("findings array");
+        assert_eq!(findings.len(), 2);
+        assert_eq!(findings[0]["term"], "configurator");
+        assert_eq!(findings[0]["source"], "Modbus Guide");
+        assert_eq!(findings[0]["weight"], PRIORITY_BOOST + 1);
+        assert_eq!(findings[1]["term"], "scenes");
+    }
+
+    #[test]
+    fn format_proposal_singular_title_and_grammar() {
+        let suggestions = vec![Suggestion {
+            term: "alpha".to_string(),
+            weight: 1,
+            source: "Doc".to_string(),
+            message: String::new(),
+        }];
+        let draft = format_proposal(&suggestions).unwrap();
+        // Singular noun (no trailing "s") for exactly one finding.
+        assert_eq!(draft.title, "Knowledge proposal: 1 finding from crawl");
+        assert!(
+            draft.narrative.contains("1 term that appear"),
+            "{}",
+            draft.narrative
+        );
+    }
+
+    #[test]
+    fn format_proposal_is_none_when_no_suggestions() {
+        // Empty eureka -> no draft, so the caller reports "nothing novel to propose"
+        // instead of opening an empty PR.
+        assert!(format_proposal(&[]).is_none());
     }
 
     #[test]

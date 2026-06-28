@@ -89,6 +89,7 @@ const api = {
   crawlGet:    (id) => invoke("crawl_get", { id }),
   crawlDelete: (id) => invoke("crawl_delete", { id }),
   crawlEureka: () => invoke("crawl_eureka"),
+  crawlEurekaProposePr: () => invoke("crawl_eureka_propose_pr"),
   // code standard + self-audit of Hyperion's own sources (src-tauri/src/standard.rs)
   codeStandard: () => invoke("code_standard"),
   codeAudit:    () => invoke("code_audit"),
@@ -1167,6 +1168,23 @@ async function runEureka(){
         +'<div class="actxmeta mut">source: '+esc(r.source)+'</div></div>').join('')
     +'</div></div>';
 }
+// Close the knowledge loop: draft the current eureka findings into a human-approvable
+// in-app PR (backend secret-scans every field). Surfaces the created PR's id/title or a
+// clear "nothing novel" message; refreshes the PR pane if it's open.
+async function proposeEurekaPr(){
+  const btn=$('#crawlproposebtn'), st=$('#crawlpropose');
+  btn.disabled=true; const label=btn.textContent; btn.textContent='Proposing…'; st.textContent='';
+  try{
+    const r=await api.crawlEurekaProposePr();
+    if(r && r.created){
+      st.textContent='Opened PR #'+r.pr_id+' — "'+(r.title||'')+'" ('+r.count+' finding'+(r.count===1?'':'s')+'). Review it in the PRs panel.';
+      if(typeof prOpen!=='undefined' && prOpen){ prDetail=null; await refreshPrs(); }
+    }else{
+      st.textContent=(r&&r.reason)?r.reason:'Nothing novel to propose.';
+    }
+  }catch(e){ st.textContent='Propose failed: '+e; }
+  finally{ btn.disabled=false; btn.textContent=label; }
+}
 
 // ----- code standard + audit (standard.rs) -----
 async function runCodeAudit(){
@@ -1398,6 +1416,7 @@ async function init(){
   $('#crawladd').onclick=addCrawl;
   $('#crawlurl').addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); addCrawl(); }});
   $('#crawleurekabtn').onclick=runEureka;
+  $('#crawlproposebtn').onclick=proposeEurekaPr;
   $('#codetoggle').onclick=()=>kqToggle('#kqcode','#codebody',null);
   $('#coderun').onclick=runCodeAudit;
   $('#sectoggle').onclick=()=>kqToggle('#kqsec','#secbody',null);
