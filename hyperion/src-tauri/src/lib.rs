@@ -9,6 +9,7 @@
 // Strictly read-only with respect to the bOS system — never writes to it.
 
 mod agent;
+mod artifacts;
 mod collab;
 mod crawler;
 mod diff;
@@ -731,6 +732,33 @@ fn wiki_export(dest: String) -> Result<Value, String> {
     }
     let summary = export::export_site(&pages, Path::new(dest))?;
     Ok(json!({ "written": summary.written, "index_path": summary.index_path }))
+}
+
+// ------------------------- artifact templates (V2, Track 4) -------------------------
+//
+// The bundled HTML-effectiveness artifact library (artifacts.rs): pickable, themeable
+// starting points the operator inserts into a wiki page. Both commands are static —
+// the catalog is compiled into the binary via `include_str!`, so neither needs an
+// open project or any state. Read-only toward bOS. Saving the inserted HTML still
+// runs through `wiki_save`'s secret scan and length check.
+
+/// The artifact-template catalog: `{key, label, description}` for each bundled
+/// pattern, in gallery order. The HTML body is fetched separately (see
+/// `artifact_template_get`) so the listing stays small.
+#[tauri::command]
+fn artifact_templates_list() -> Result<Vec<Value>, String> {
+    artifacts::catalog()
+        .iter()
+        .map(|t| serde_json::to_value(t).map_err(|e| format!("serialize artifact template: {e}")))
+        .collect()
+}
+
+/// The full, themeable HTML body of one artifact template, by key, for the operator
+/// to drop into the wiki editor. Errors cleanly when the key is unknown.
+#[tauri::command]
+fn artifact_template_get(key: String) -> Result<Value, String> {
+    let html = artifacts::get(&key)?;
+    Ok(json!({ "key": key, "html": html }))
 }
 
 // ----------------------------- roster commands (M5) -----------------------------
@@ -1971,6 +1999,8 @@ pub fn run() {
             wiki_get,
             wiki_save,
             wiki_export,
+            artifact_templates_list,
+            artifact_template_get,
             agent_roster,
             agent_instincts_get,
             agent_instincts_set,
