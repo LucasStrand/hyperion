@@ -9,6 +9,7 @@
 // Strictly read-only with respect to the bOS system — never writes to it.
 
 mod agent;
+mod bosparse;
 mod embed;
 mod entra;
 mod ingest;
@@ -351,8 +352,45 @@ fn get_playbook(name: String, state: State<'_, Mutex<Store>>) -> Result<Value, S
     serde_json::from_str(&text).map_err(|e| format!("{e}"))
 }
 
-/// Run bos_explore.py on a .bos file, writing `out_json`, and return its nodes.
+/// Parse a `.bos` file into the node array, writing `out_json`, and return its
+/// nodes.
+///
+/// The pure-Rust parser (`bosparse`) is the default — the packaged installer no
+/// longer requires Python + `pip install nrbf`. Python is now OPTIONAL: it is
+/// kept only as a safety-net fallback, used automatically if the Rust parser
+/// errors on some unforeseen record shape, so no user can regress.
 fn run_parser(workspace: &Path, bos_path: &str, out_json: &Path) -> Result<Vec<Value>, String> {
+    match parse_bos_rust(bos_path, out_json) {
+        Ok(nodes) => Ok(nodes),
+        Err(rust_err) => match run_parser_python(workspace, bos_path, out_json) {
+            Ok(nodes) => Ok(nodes),
+            Err(py_err) => Err(format!(
+                "pure-Rust parser failed ({rust_err}); optional Python fallback \
+                 also failed ({py_err})"
+            )),
+        },
+    }
+}
+
+/// Pure-Rust `.bos` parse (default). Reads the file, parses the MS-NRBF graph,
+/// reconstructs the node tree, and persists the same JSON `out_json` the Python
+/// reference wrote (so dev-mode `bos_map.json` keeps working).
+fn parse_bos_rust(bos_path: &str, out_json: &Path) -> Result<Vec<Value>, String> {
+    let bytes = std::fs::read(bos_path).map_err(|e| format!("read .bos file: {e}"))?;
+    let nodes = bosparse::parse_bos_file(&bytes)?;
+    let text =
+        serde_json::to_string_pretty(&nodes).map_err(|e| format!("serialize parsed nodes: {e}"))?;
+    std::fs::write(out_json, text).map_err(|e| format!("write parser output: {e}"))?;
+    Ok(nodes)
+}
+
+/// Legacy fallback: shell out to bos_explore.py (requires Python + `nrbf`).
+/// Only reached if the pure-Rust parser above returns an error.
+fn run_parser_python(
+    workspace: &Path,
+    bos_path: &str,
+    out_json: &Path,
+) -> Result<Vec<Value>, String> {
     let script = workspace.join("bos_explore.py");
     let status = std::process::Command::new("python")
         .arg(&script)
