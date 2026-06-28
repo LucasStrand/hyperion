@@ -1445,6 +1445,72 @@ fn recommend_tools(
         .collect()
 }
 
+/// Take a recommended tool one honest step toward execution. The `(kind, name)`
+/// IDENTIFY a recommendation; the runnable command is re-derived SERVER-SIDE from the
+/// static catalog in `tooling::plan_invocation`, so the executed arguments can never
+/// contain webview-supplied free-text. The plan is built for the currently *detected*
+/// runtime (reusing the same `active_runtime` detection as `agent_ask`).
+///
+/// What actually runs vs. what is advisory:
+///   * An ECC skill under a detected Claude Code runtime is REALLY executed (only when
+///     `execute == true`): Hyperion launches `claude -p "/skill"` headlessly via
+///     `agent::run_invocation` and returns its output.
+///   * Everything else — a skill under Codex/OpenRouter, or any MCP tool — is ADVISORY:
+///     the response carries a copy-ready command + a note, and nothing is run.
+///
+/// `execute` is the operator's explicit confirmation; with `execute == false` (the
+/// default the UI uses to preview), this only returns the plan. The runtime binary must
+/// still be freshly present on PATH at run time (guards a PATH change after detection).
+#[tauri::command]
+async fn run_tool(
+    kind: String,
+    name: String,
+    execute: bool,
+    vault: State<'_, Mutex<Vault>>,
+) -> Result<Value, String> {
+    let avail = availability(&vault);
+    let runtime = active_runtime(&avail).ok_or(
+        "no agent runtime available — install Claude Code or Codex, or set OPENROUTER_API_KEY",
+    )?;
+    let plan = tooling::plan_invocation(&kind, &name, runtime)?;
+    let mut out = serde_json::to_value(&plan).map_err(|e| format!("serialize plan: {e}"))?;
+
+    // The runnable binary (claude) — looked up fresh so the gate reflects PATH *now*.
+    let exe = if plan.executable {
+        agent::claude_path()
+    } else {
+        None
+    };
+    match tooling::run_gate(&plan, execute, exe.is_some()) {
+        tooling::RunOutcome::PlanOnly => {
+            out["ran"] = json!(false);
+        }
+        tooling::RunOutcome::AdvisoryBlocked => {
+            out["ran"] = json!(false);
+            out["reason"] =
+                json!("this recommendation is advisory — copy the command and run it yourself");
+        }
+        tooling::RunOutcome::MissingBinary => {
+            out["ran"] = json!(false);
+            out["reason"] = json!("Claude Code (`claude`) is not on PATH — cannot execute here");
+        }
+        tooling::RunOutcome::Execute => {
+            let exe = exe.expect("Execute outcome implies the binary was found");
+            let args = plan.args.clone();
+            // Run the (up-to-180s) headless session off the UI thread, mirroring agent_ask.
+            let answer = tauri::async_runtime::spawn_blocking(move || {
+                let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+                agent::run_invocation(&exe, &arg_refs, "claude")
+            })
+            .await
+            .map_err(|e| format!("tool task failed: {e}"))??;
+            out["ran"] = json!(true);
+            out["output"] = json!(answer);
+        }
+    }
+    Ok(out)
+}
+
 // ----------------------------- code standard (M3) -----------------------------
 //
 // The recommended project code standard (standard.rs) plus a deterministic audit
@@ -2332,6 +2398,7 @@ pub fn run() {
             timeline_list,
             timeline_add,
             recommend_tools,
+            run_tool,
             code_standard,
             code_audit,
             security_scan,

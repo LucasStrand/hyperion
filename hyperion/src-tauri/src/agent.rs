@@ -463,6 +463,23 @@ fn ask_cli(
     finalize(out, who)
 }
 
+/// Run an *already-resolved* runtime binary with a CONSTANT argument vector and
+/// capture its output. This is the execution primitive behind the tool runner
+/// (`lib::run_tool` → a recommended ECC skill launched as `claude -p "/skill"`).
+///
+/// Unlike [`ask`], the whole instruction lives in `args` (e.g. `["-p", "/skill"]`),
+/// not on stdin. That is safe ONLY because every element of `args` originates from
+/// `tooling::plan_invocation`'s compile-time-static catalog — never from operator
+/// free-text — so nothing here can smuggle extra flags or shell syntax. There is no
+/// shell: `cli_command` execs the binary directly (wrapping a Windows `.cmd` shim in
+/// `cmd /C`), and no stdin is supplied. The same 180s timeout / output cap / process-
+/// tree teardown as a normal ask apply via `run_capture`.
+pub fn run_invocation(exe: &Path, args: &[&str], who: &str) -> Result<String, String> {
+    let cmd = cli_command(exe, args);
+    let out = run_capture(cmd, Vec::new(), ASK_TIMEOUT)?;
+    finalize(out, who)
+}
+
 fn ask_openrouter(system: &str, question: &str, key: &str, model: &str) -> Result<String, String> {
     // Serialize/parse with serde_json (already a dependency) rather than pulling
     // in ureq's optional `json` feature.

@@ -14,6 +14,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::agent::Runtime;
 use crate::ingest;
 
 /// What the recommender knows about the current context. `has_bos` is whether a
@@ -35,10 +36,13 @@ pub struct ToolingInput {
 /// `name` is its identifier, and `reason` is the human-readable "why now". `invoke`
 /// is a concrete, copy-pasteable "how to run it" hint for the human operator or the
 /// external agent runtime (a slash-command for a skill, or a server · tool pair for
-/// an MCP). It is *guidance only* — Hyperion never executes skills or MCP tools from
-/// Rust; that capability lives in the agent runtime outside the app. Serializes to a
-/// flat JSON object the renderer can list directly (mirrors `suggest::Suggestion`).
-/// The ordered list returned by [`recommend`] doubles as a step-by-step tool plan.
+/// an MCP). The recommendation itself is advisory; the honest execution bridge lives in
+/// [`plan_invocation`], which can really launch ONE case — an ECC skill under a detected
+/// Claude Code runtime (`claude -p "/skill"`). Every other pairing (a skill under
+/// Codex/OpenRouter, or any MCP tool, which is callable only inside a configured agent
+/// session) stays copy-and-run-yourself guidance. Serializes to a flat JSON object the
+/// renderer lists directly (mirrors `suggest::Suggestion`); the ordered list returned by
+/// [`recommend`] doubles as a step-by-step tool plan.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ToolRec {
     pub kind: &'static str,
@@ -290,6 +294,154 @@ pub fn recommend(input: &ToolingInput) -> Vec<ToolRec> {
     out
 }
 
+// ----------------------------- invocation (M9 → execution bridge) -----------------------------
+//
+// The recommender above is advisory: it names a skill/MCP and a copy-pasteable `invoke`
+// hint. This block takes the SMALLEST honest step toward execution. Hyperion already
+// shells out to a local agent runtime for grounded Q&A (`agent::ask` → `claude -p` /
+// `codex exec`); we reuse exactly that mechanism to actually launch a recommended ECC
+// *skill* — but only under the one runtime that understands ECC slash-commands (Claude
+// Code). Everything else (a skill under Codex/OpenRouter, or any MCP tool) stays
+// advisory and is returned as copy-ready guidance, never silently "run".
+//
+// Security: the executed argument vector is built ONLY from `invoke_hint`'s compile-time
+// catalog below — the caller passes the (kind,name) IDENTIFIERS of a recommendation, and
+// the runnable command is re-derived here, so no operator/webview free-text ever reaches
+// the process arguments. There is no shell (see `agent::run_invocation`).
+
+/// Canonical, compile-time "how to run it" string for a known tool `(kind, name)`. The
+/// single source of truth for the executable/advisory command, shared with `recommend`
+/// (whose inline `invoke` values must stay equal to these — enforced by a test). Returns
+/// `None` for any pair the recommender cannot emit, so an unknown request is a hard error
+/// rather than an attempt to run an arbitrary string.
+fn invoke_hint(kind: &str, name: &str) -> Option<&'static str> {
+    match (kind, name) {
+        ("skill", "comfortclick-bos") => Some("/comfortclick-bos"),
+        ("skill", "nutrient-document-processing") => Some("/nutrient-document-processing"),
+        ("skill", "regex-vs-llm-structured-text") => Some("/regex-vs-llm-structured-text"),
+        ("skill", "rust-review") => Some("/rust-review"),
+        ("skill", "security-review") => Some("/security-review"),
+        ("mcp", "firecrawl") => Some("firecrawl MCP · firecrawl_search / firecrawl_scrape"),
+        ("mcp", "chrome-devtools") => Some("chrome-devtools MCP · navigate_page / take_screenshot"),
+        _ => None,
+    }
+}
+
+/// A concrete plan for acting on one recommendation under the detected runtime. Serializes
+/// to a flat JSON object for the webview. `executable` is the load-bearing flag: it is
+/// `true` ONLY when Hyperion can really run this here (an ECC skill under Claude Code);
+/// otherwise `display`/`note` carry copy-ready guidance and `args` is empty.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct InvocationPlan {
+    pub kind: String,
+    pub name: String,
+    /// Label of the runtime the plan was built for (e.g. "Claude Code").
+    pub runtime: &'static str,
+    /// True only when `args` is a real, runnable command for a detected runtime.
+    pub executable: bool,
+    /// The runtime binary NAME to resolve+run when executable (e.g. "claude"); empty otherwise.
+    pub program: &'static str,
+    /// Constant argv TAIL (the program path is prepended by the caller). Empty unless executable.
+    pub args: Vec<String>,
+    /// Copy-ready terminal command (executable case) or the advisory hint (otherwise).
+    pub display: String,
+    /// Plain-language statement of what this does — real execution vs. advisory-only.
+    pub note: String,
+}
+
+/// Build the [`InvocationPlan`] for a recommended tool under `runtime`. Pure: same
+/// `(kind, name, runtime)` → same plan, no I/O. Real execution is possible only for an
+/// ECC skill (a `/slash` command) under [`Runtime::ClaudeCode`], the sole backend that
+/// understands ECC slash-commands; every other pairing yields an advisory plan. Errors
+/// only when `(kind, name)` is not a tool the recommender can emit.
+pub fn plan_invocation(kind: &str, name: &str, runtime: Runtime) -> Result<InvocationPlan, String> {
+    let invoke = invoke_hint(kind, name).ok_or_else(|| format!("unknown tool: {kind}/{name}"))?;
+    let base = |executable: bool,
+                program: &'static str,
+                args: Vec<String>,
+                display: String,
+                note: String| {
+        InvocationPlan {
+            kind: kind.to_string(),
+            name: name.to_string(),
+            runtime: runtime.label(),
+            executable,
+            program,
+            args,
+            display,
+            note,
+        }
+    };
+
+    // An ECC skill is a slash-command; that is the only thing we can actually launch.
+    let is_skill_slash = kind == "skill" && invoke.starts_with('/');
+    if is_skill_slash && runtime == Runtime::ClaudeCode {
+        // `claude -p "/skill"`: a one-shot, headless (print-mode) Claude Code session.
+        // `invoke` is a static catalog string, so passing it as a positional argument
+        // cannot smuggle flags or shell syntax.
+        return Ok(base(
+            true,
+            "claude",
+            vec!["-p".to_string(), invoke.to_string()],
+            format!("claude -p \"{invoke}\""),
+            "Real execution: Hyperion launches the skill as a one-shot headless Claude Code session (claude -p) and returns its output.".to_string(),
+        ));
+    }
+    if is_skill_slash {
+        // A skill under Codex/OpenRouter: those runtimes have no ECC skills, so Hyperion
+        // cannot run it — surface the copy-ready Claude Code command as guidance.
+        return Ok(base(
+            false,
+            "",
+            Vec::new(),
+            format!("claude -p \"{invoke}\""),
+            format!(
+                "Advisory only: ECC skills run inside Claude Code, but the active runtime is {}. Hyperion will not run this — paste the command above into a Claude Code session.",
+                runtime.label()
+            ),
+        ));
+    }
+    // MCP (or any non-slash hint): an MCP tool is callable only by an agent inside a
+    // session that already has that server configured. Hyperion shows the call, never runs it.
+    Ok(base(
+        false,
+        "",
+        Vec::new(),
+        invoke.to_string(),
+        "Advisory only: MCP tools are invoked by the agent inside a session that has this server configured. Hyperion surfaces the call but does not execute it.".to_string(),
+    ))
+}
+
+/// What `lib::run_tool` should do, decided purely from the plan, whether the operator
+/// confirmed execution, and whether the runtime binary is actually present on PATH. Kept
+/// as a pure function so every branch — including the *not-installed* path — is unit-
+/// testable without spawning a process.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunOutcome {
+    /// No execution requested: return the plan for the UI to copy/run.
+    PlanOnly,
+    /// Execution requested but the plan is advisory: return guidance, run nothing.
+    AdvisoryBlocked,
+    /// Execution requested for a runnable plan, but the runtime binary is not on PATH.
+    MissingBinary,
+    /// Cleared to actually run the command.
+    Execute,
+}
+
+/// Pure gate for the tool runner. `execute` is the operator's explicit confirmation;
+/// `binary_present` is whether the plan's runtime binary was just found on PATH.
+pub fn run_gate(plan: &InvocationPlan, execute: bool, binary_present: bool) -> RunOutcome {
+    if !execute {
+        RunOutcome::PlanOnly
+    } else if !plan.executable {
+        RunOutcome::AdvisoryBlocked
+    } else if !binary_present {
+        RunOutcome::MissingBinary
+    } else {
+        RunOutcome::Execute
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -448,5 +600,89 @@ mod tests {
         assert_eq!(bos.invoke, "/comfortclick-bos");
         let fc = recs.iter().find(|r| r.name == "firecrawl").unwrap();
         assert!(fc.invoke.contains("firecrawl"), "got: {}", fc.invoke);
+    }
+
+    // ---- invocation bridge ----
+
+    #[test]
+    fn invoke_hint_is_the_single_source_of_truth_for_every_recommendation() {
+        // A broad context that fires every branch; each emitted rec's inline `invoke`
+        // must equal the canonical catalog string used to build runnable commands, so
+        // the two can never drift.
+        let recs = recommend(&input(
+            true,
+            &["pdf", "csv"],
+            "review this Rust code, check the API token, and search the web for the datasheet in the browser",
+        ));
+        assert!(recs.len() >= 5, "expected several recs, got: {recs:?}");
+        for r in &recs {
+            assert_eq!(
+                invoke_hint(r.kind, r.name),
+                Some(r.invoke),
+                "catalog drift for {}/{}",
+                r.kind,
+                r.name
+            );
+        }
+    }
+
+    #[test]
+    fn skill_under_claude_code_is_executable_with_a_static_argv() {
+        let plan = plan_invocation("skill", "comfortclick-bos", Runtime::ClaudeCode).unwrap();
+        assert!(plan.executable);
+        assert_eq!(plan.program, "claude");
+        // The argv is exactly the constant flag + the static slash command — no caller text.
+        assert_eq!(
+            plan.args,
+            vec!["-p".to_string(), "/comfortclick-bos".to_string()]
+        );
+        assert!(plan.display.contains("/comfortclick-bos"));
+        assert!(plan.note.to_lowercase().contains("real execution"));
+    }
+
+    #[test]
+    fn skill_under_non_claude_runtimes_is_advisory_only() {
+        for rt in [Runtime::Codex, Runtime::OpenRouter] {
+            let plan = plan_invocation("skill", "rust-review", rt).unwrap();
+            assert!(!plan.executable, "{:?} should not execute a skill", rt);
+            assert!(plan.args.is_empty());
+            assert_eq!(plan.program, "");
+            assert!(plan.note.to_lowercase().contains("advisory"));
+        }
+    }
+
+    #[test]
+    fn mcp_tool_is_advisory_under_every_runtime() {
+        for rt in [Runtime::ClaudeCode, Runtime::Codex, Runtime::OpenRouter] {
+            let plan = plan_invocation("mcp", "firecrawl", rt).unwrap();
+            assert!(!plan.executable, "MCP must never be executed ({rt:?})");
+            assert!(plan.args.is_empty());
+            assert!(plan.display.contains("firecrawl"));
+            assert!(plan.note.to_lowercase().contains("advisory"));
+        }
+    }
+
+    #[test]
+    fn unknown_tool_is_a_hard_error() {
+        assert!(plan_invocation("skill", "no-such-skill", Runtime::ClaudeCode).is_err());
+        assert!(plan_invocation("mcp", "no-such-mcp", Runtime::ClaudeCode).is_err());
+    }
+
+    #[test]
+    fn run_gate_covers_planonly_advisory_missing_binary_and_execute() {
+        let exec_plan = plan_invocation("skill", "security-review", Runtime::ClaudeCode).unwrap();
+        let advisory_plan = plan_invocation("mcp", "chrome-devtools", Runtime::ClaudeCode).unwrap();
+
+        // No confirmation → just return the plan, regardless of executability.
+        assert_eq!(run_gate(&exec_plan, false, true), RunOutcome::PlanOnly);
+        // Confirmed, but the plan is advisory → blocked, never run.
+        assert_eq!(
+            run_gate(&advisory_plan, true, true),
+            RunOutcome::AdvisoryBlocked
+        );
+        // Confirmed runnable plan, but the binary is NOT installed → missing-binary path.
+        assert_eq!(run_gate(&exec_plan, true, false), RunOutcome::MissingBinary);
+        // Confirmed, runnable, binary present → cleared to execute.
+        assert_eq!(run_gate(&exec_plan, true, true), RunOutcome::Execute);
     }
 }
