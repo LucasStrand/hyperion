@@ -307,7 +307,11 @@ const DONE=new Set();
 // reach loadGuideFromObject directly, so accept a single object or an array here
 // too (mirrors how `highlight` is handled). Instructional only — never automated.
 function uiList(s){ if(!s||!s.ui) return [];
-  return (Array.isArray(s.ui)?s.ui:[s.ui]).filter(u=>u&&typeof u==='object'&&!Array.isArray(u)); }
+  // Only the three real bOS apps may render as a guided UI action — mirror the
+  // Rust playbook::canon_app whitelist so an agent-emitted block can't surface a
+  // step for a non-existent/foreign app.
+  const APPS=['Configurator','Service','Client'];
+  return (Array.isArray(s.ui)?s.ui:[s.ui]).filter(u=>u&&typeof u==='object'&&!Array.isArray(u)&&APPS.includes(u.app)); }
 // Fetch a playbook file by name, then hand the parsed object to the shared
 // renderer/auto-grader below.
 async function loadGuide(file){ loadGuideFromObject(await api.playbook(file)); }

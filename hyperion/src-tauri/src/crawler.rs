@@ -20,6 +20,7 @@
 use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::io::Read;
+use std::net::{IpAddr, Ipv4Addr, ToSocketAddrs};
 use std::time::Duration;
 
 use serde::Serialize;
@@ -397,6 +398,86 @@ pub fn firecrawl_configured() -> bool {
     firecrawl_key().is_some()
 }
 
+/// True if `ip` is one the crawler must never reach: loopback, RFC-1918 private,
+/// link-local (incl. the `169.254.169.254` cloud-metadata endpoint), unspecified,
+/// broadcast, documentation, or `0.0.0.0/8`. IPv6 loopback/unspecified, ULA
+/// (`fc00::/7`), link-local (`fe80::/10`), and v4-mapped equivalents included.
+fn ip_is_blocked(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(a) => v4_blocked(a),
+        IpAddr::V6(a) => {
+            if let Some(v4) = a.to_ipv4_mapped() {
+                return v4_blocked(v4);
+            }
+            if a.is_loopback() || a.is_unspecified() {
+                return true;
+            }
+            let s = a.segments();
+            (s[0] & 0xfe00) == 0xfc00 || (s[0] & 0xffc0) == 0xfe80
+        }
+    }
+}
+
+fn v4_blocked(a: Ipv4Addr) -> bool {
+    a.is_loopback()
+        || a.is_private()
+        || a.is_link_local()
+        || a.is_unspecified()
+        || a.is_broadcast()
+        || a.is_documentation()
+        || a.octets()[0] == 0
+}
+
+/// Parse `host` and `port` from an `http(s)` URL without a URL crate. Strips
+/// scheme, path/query/fragment, and userinfo; understands `[ipv6]:port`.
+fn host_port(url: &str) -> Option<(String, u16)> {
+    let https = url.starts_with("https://");
+    let after = url.split_once("://")?.1;
+    let authority = after.split(['/', '?', '#']).next()?;
+    let authority = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    let default = if https { 443 } else { 80 };
+    if let Some(rest) = authority.strip_prefix('[') {
+        let (h, tail) = rest.split_once(']')?;
+        let port = tail
+            .strip_prefix(':')
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(default);
+        return Some((h.to_string(), port));
+    }
+    match authority.rsplit_once(':') {
+        Some((h, p)) if !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) => {
+            Some((h.to_string(), p.parse().unwrap_or(default)))
+        }
+        _ => Some((authority.to_string(), default)),
+    }
+}
+
+/// SSRF guard: resolve the URL's host and refuse if ANY resolved address is a
+/// private/loopback/link-local/metadata IP. Conservative — a single blocked
+/// address fails the whole fetch so a dual-homed name can't slip past. Residual:
+/// DNS rebinding between this check and ureq's own resolve, acceptable for an
+/// operator-driven desktop tool.
+fn guard_public_host(url: &str) -> Result<(), String> {
+    let (host, port) =
+        host_port(url).ok_or_else(|| "crawler: could not parse URL host".to_string())?;
+    let mut resolved = false;
+    for sa in (host.as_str(), port).to_socket_addrs().map_err(|e| {
+        format!(
+            "crawler: host did not resolve: {}",
+            redact_secrets(&e.to_string())
+        )
+    })? {
+        resolved = true;
+        if ip_is_blocked(sa.ip()) {
+            return Err("crawler: refusing to fetch a private/loopback/link-local address".into());
+        }
+    }
+    if !resolved {
+        return Err("crawler: host did not resolve".into());
+    }
+    Ok(())
+}
+
 /// Fetch the raw HTML at `url` over a single capped, timed `GET`. Disabled by
 /// default: without `HYPERION_CRAWL_ENABLED` set truthy this returns `Err` before
 /// touching the network (so CI/offline stays green). Only `http(s)` URLs are allowed
@@ -429,7 +510,13 @@ pub fn fetch(url: &str) -> Result<String, String> {
             return Ok(body);
         }
     }
-    let resp = ureq::get(url)
+    // SSRF guard for the direct egress path: refuse private/loopback/link-local/
+    // metadata hosts, and do NOT follow redirects so a public URL can't 30x-bounce
+    // onto an internal address.
+    guard_public_host(url)?;
+    let agent = ureq::builder().redirects(0).build();
+    let resp = agent
+        .get(url)
         .timeout(CRAWL_TIMEOUT)
         .set("User-Agent", USER_AGENT)
         .call();
@@ -878,5 +965,53 @@ mod tests {
             Some(p) => std::env::set_var("HYPERION_CRAWL_ENABLED", p),
             None => std::env::remove_var("HYPERION_CRAWL_ENABLED"),
         }
+    }
+
+    #[test]
+    fn ssrf_blocks_private_and_metadata_addresses() {
+        use std::net::{Ipv4Addr, Ipv6Addr};
+        for ip in [
+            "127.0.0.1",
+            "10.0.0.5",
+            "172.16.3.4",
+            "192.168.1.1",
+            "169.254.169.254", // cloud metadata
+            "0.0.0.0",
+        ] {
+            let a: Ipv4Addr = ip.parse().unwrap();
+            assert!(ip_is_blocked(IpAddr::V4(a)), "{ip} must be blocked");
+        }
+        for ip in ["8.8.8.8", "1.1.1.1", "93.184.216.34"] {
+            let a: Ipv4Addr = ip.parse().unwrap();
+            assert!(!ip_is_blocked(IpAddr::V4(a)), "{ip} must be allowed");
+        }
+        assert!(ip_is_blocked(IpAddr::V6(Ipv6Addr::LOCALHOST)));
+        // ULA fc00::/7 and link-local fe80::/10
+        assert!(ip_is_blocked("fd00::1".parse::<Ipv6Addr>().unwrap().into()));
+        assert!(ip_is_blocked("fe80::1".parse::<Ipv6Addr>().unwrap().into()));
+        // v4-mapped metadata address must also be caught
+        assert!(ip_is_blocked(
+            "::ffff:169.254.169.254".parse::<Ipv6Addr>().unwrap().into()
+        ));
+        assert!(!ip_is_blocked(
+            "2606:4700:4700::1111".parse::<Ipv6Addr>().unwrap().into()
+        ));
+    }
+
+    #[test]
+    fn host_port_parses_scheme_userinfo_and_ipv6() {
+        assert_eq!(
+            host_port("https://docs.example.com/a/b?x=1"),
+            Some(("docs.example.com".into(), 443))
+        );
+        assert_eq!(
+            host_port("http://example.com:8080/x"),
+            Some(("example.com".into(), 8080))
+        );
+        assert_eq!(
+            host_port("https://user:pass@host.tld/p"),
+            Some(("host.tld".into(), 443))
+        );
+        assert_eq!(host_port("http://[::1]:9000/"), Some(("::1".into(), 9000)));
     }
 }
