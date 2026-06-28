@@ -20,6 +20,7 @@ mod export;
 mod ingest;
 mod milesight;
 mod netreg;
+mod playbook;
 mod projects;
 mod roster;
 mod security;
@@ -360,7 +361,10 @@ fn get_playbook(name: String, state: State<'_, Mutex<Store>>) -> Result<Value, S
         .join("playbooks")
         .join(&name);
     let text = std::fs::read_to_string(&path).map_err(|e| format!("{e}"))?;
-    serde_json::from_str(&text).map_err(|e| format!("{e}"))
+    let value: Value = serde_json::from_str(&text).map_err(|e| format!("{e}"))?;
+    // Additive: validate/normalize the optional per-step `ui` guided-walkthrough
+    // actions. Playbooks without `ui` round-trip unchanged.
+    Ok(playbook::normalize(value))
 }
 
 /// Locate the bundled `bos_explore.py` (used only by the optional Python

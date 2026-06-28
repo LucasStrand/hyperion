@@ -288,6 +288,15 @@ function usagesView(){
 
 // ---------- guide (playbooks) ----------
 let PB=null, STEP=-1;
+// Per-step "done" state for the guided walkthrough (operator-driven; independent
+// of the auto-graded check badge). Holds step indices the user marked complete.
+const DONE=new Set();
+// Normalize a step's optional `ui` guided-walkthrough actions to an array. The
+// Rust loader already normalizes file-backed playbooks, but agent-emitted blocks
+// reach loadGuideFromObject directly, so accept a single object or an array here
+// too (mirrors how `highlight` is handled). Instructional only — never automated.
+function uiList(s){ if(!s||!s.ui) return [];
+  return (Array.isArray(s.ui)?s.ui:[s.ui]).filter(u=>u&&typeof u==='object'&&!Array.isArray(u)); }
 // Fetch a playbook file by name, then hand the parsed object to the shared
 // renderer/auto-grader below.
 async function loadGuide(file){ loadGuideFromObject(await api.playbook(file)); }
@@ -300,14 +309,22 @@ function loadGuideFromObject(pb){
   if(typeof pb.feature!=='string' || !pb.feature.trim()) throw new Error('missing a "feature" name');
   if(!Array.isArray(pb.steps) || !pb.steps.length) throw new Error('needs a non-empty "steps" array');
   for(const s of pb.steps){ if(!s || typeof s!=='object' || Array.isArray(s)) throw new Error('every step must be a non-null object'); }
-  PB=pb; STEP=-1;
+  PB=pb; STEP=-1; DONE.clear();
   $('#gtitle').textContent=PB.feature||'Guide';
   let h=''; if(PB.summary) h+='<div class="mut" style="margin-bottom:8px">'+esc(PB.summary)+'</div>';
-  (PB.steps||[]).forEach((s,i)=>{h+='<div class="gstep" data-i="'+i+'" onclick="gotoStep('+i+')">'
+  (PB.steps||[]).forEach((s,i)=>{const us=uiList(s);
+    h+='<div class="gstep" data-i="'+i+'" onclick="gotoStep('+i+')">'
     +'<div><span class="gn">'+esc(''+(s.n||i+1))+'</span><span class="gt">'+esc(s.title||'')+'</span>'
-    +(s.check?'<span class="badge-st st-todo" id="bst'+i+'">checking...</span>':'')+'</div>'
+    +(s.check?'<span class="badge-st st-todo" id="bst'+i+'">checking...</span>':'')
+    +'<button type="button" class="gdone" id="gd'+i+'" onclick="event.stopPropagation();markStepDone('+i+')">Mark done</button></div>'
     +(s.check?'<div class="chklist" id="chk'+i+'"></div>':'')
     +(s.detail?'<div class="gd">'+esc(s.detail)+'</div>':'')
+    +(us.length?'<div class="guiwalk">'+us.map(u=>'<div class="guirow">'
+        +(u.app?'<span class="guiapp app-'+esc((''+u.app).toLowerCase())+'">'+esc(u.app)+'</span>':'')
+        +(u.location?'<span class="guiloc">&#128205; '+esc(u.location)+'</span>':'')
+        +'<div class="guiact">&#128073; '+esc(u.action||'')+'</div>'
+        +(u.verify?'<div class="guiver">&#10003; Expect: '+esc(u.verify)+'</div>':'')
+        +'</div>').join('')+'</div>':'')
     +(s.target?'<div class="gtgt reflink" onclick="event.stopPropagation();navigate(this.dataset.p)" data-p="'+esc(s.target)+'">&#128205; '+esc(s.target)+'</div>':'')
     +(s.diff?'<div class="diffwrap" data-i="'+i+'" onclick="event.stopPropagation()">'
        +'<div class="difftabs"><span class="dt before" data-m="before">Before</span>'
@@ -318,7 +335,29 @@ function loadGuideFromObject(pb){
   $('#gbody').innerHTML=h||'<div class="mut">No steps.</div>';
   (PB.steps||[]).forEach((s,i)=>{if(s.diff) showDiff(i,'after');});
   $('#guide').style.display='block';
+  updateGuideFooter();
   runChecks();
+}
+// ----- guided-walkthrough navigation + per-step done state -----
+// Step counter + Back/Next enablement in the guide footer.
+function updateGuideFooter(){
+  const n=(PB&&PB.steps||[]).length;
+  const pos=$('#gpos'); if(pos) pos.textContent = n
+    ? ('Step '+(STEP<0?1:STEP+1)+' of '+n+(DONE.size?(' · '+DONE.size+' done'):'')) : '';
+  const prev=$('#gprev'), next=$('#gnext');
+  if(prev) prev.disabled = n===0 || STEP<=0;
+  if(next) next.disabled = n===0 || STEP>=n-1;
+}
+function guideNext(){ const n=(PB&&PB.steps||[]).length; if(n) gotoStep(Math.min((STEP<0?-1:STEP)+1,n-1)); }
+function guidePrev(){ const n=(PB&&PB.steps||[]).length; if(n) gotoStep(Math.max((STEP<0?0:STEP)-1,0)); }
+// Toggle a step's operator-confirmed "done" state (independent of auto-grading).
+function markStepDone(i){
+  if(DONE.has(i)) DONE.delete(i); else DONE.add(i);
+  const step=document.querySelector('#gbody .gstep[data-i="'+i+'"]');
+  if(step) step.classList.toggle('done',DONE.has(i));
+  const b=document.getElementById('gd'+i);
+  if(b) b.textContent=DONE.has(i)?'✓ Done':'Mark done';
+  updateGuideFooter();
 }
 // ----- per-step status: evaluate each step's check against the live .bos -----
 const _nodeCache={};
@@ -407,11 +446,15 @@ function applyHighlight(){
 }
 function gotoStep(i){STEP=i; const s=(PB.steps||[])[i]; if(!s)return;
   $$('#gbody .gstep').forEach(x=>x.classList.toggle('active',+x.dataset.i===i));
+  const cur=document.querySelector('#gbody .gstep[data-i="'+i+'"]');
+  if(cur) cur.scrollIntoView({block:'nearest'});
+  updateGuideFooter();
   $$('.tn.guide').forEach(x=>x.classList.remove('guide'));
   ACTIVE_HL = s.highlight ? (Array.isArray(s.highlight)?s.highlight:[s.highlight]) : null;
   if(s.target){navigate(s.target); const el=byEl[s.target]; if(el)el.classList.add('guide');}
   else if(CUR) renderPanel();}
 function closeGuide(){$('#guide').style.display='none';$('#pbsel').value='';
+  DONE.clear();
   $$('.tn.guide').forEach(x=>x.classList.remove('guide')); ACTIVE_HL=null; if(CUR) renderPanel();}
 
 // ---------- Entra SSO + secrets vault (src-tauri/src/entra.rs, vault.rs) ----------
@@ -1315,7 +1358,7 @@ async function runWikiExport(){
   finally{ btn.disabled=false; btn.textContent='Export to folder…'; }
 }
 
-Object.assign(window, { navigate, gotoStep, closeGuide, showNode, showDiff, closeVault, closeAgent, closeWiki, closeVcs, closeKq, loadPlaybookFromBlock });
+Object.assign(window, { navigate, gotoStep, guideNext, guidePrev, markStepDone, closeGuide, showNode, showDiff, closeVault, closeAgent, closeWiki, closeVcs, closeKq, loadPlaybookFromBlock });
 
 // ---------- config render (state + tree); reused after a project/snapshot change ----------
 async function renderConfig(){
