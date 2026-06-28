@@ -6,9 +6,10 @@ See the [README](README.md) for the architecture and phase status.
 
 ## Development setup
 
-Prerequisites: [Rust](https://rustup.rs), Node 18+, the
-[Tauri prerequisites](https://tauri.app/start/prerequisites/) for your OS, and Python 3
-(used by the `.bos` parser).
+Prerequisites: [Rust](https://rustup.rs), Node 18+, and the
+[Tauri prerequisites](https://tauri.app/start/prerequisites/) for your OS. The `.bos` parser is
+pure Rust (`src-tauri/src/bosparse.rs`), so Python 3 is optional — it is only used as an
+automatic fallback for the parser (`pip install nrbf`).
 
 ```bash
 cd hyperion

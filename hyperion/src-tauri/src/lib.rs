@@ -9,6 +9,7 @@
 // Strictly read-only with respect to the bOS system — never writes to it.
 
 mod agent;
+mod bosparse;
 mod collab;
 mod crawler;
 mod diff;
@@ -361,9 +362,10 @@ fn get_playbook(name: String, state: State<'_, Mutex<Store>>) -> Result<Value, S
     serde_json::from_str(&text).map_err(|e| format!("{e}"))
 }
 
-/// Locate the bundled `bos_explore.py`. In a packaged installer the script ships
-/// in the Tauri resource dir; in `cargo tauri dev` it sits next to the workspace.
-/// Prefer the resource copy, fall back to `<workspace>/bos_explore.py`.
+/// Locate the bundled `bos_explore.py` (used only by the optional Python
+/// fallback). In a packaged installer the script ships in the Tauri resource
+/// dir; in `cargo tauri dev` it sits next to the workspace. Prefer the resource
+/// copy, fall back to `<workspace>/bos_explore.py`.
 fn resolve_parser_script(app: &tauri::AppHandle, workspace: &Path) -> PathBuf {
     if let Ok(res) = app
         .path()
@@ -377,9 +379,9 @@ fn resolve_parser_script(app: &tauri::AppHandle, workspace: &Path) -> PathBuf {
 }
 
 /// Find a usable Python 3 interpreter on PATH (`python`, then `python3`, then the
-/// Windows `py` launcher). Returns the command name, or a clear prerequisite
-/// message the UI surfaces verbatim. Goes away once `.bos` parsing is ported to
-/// pure Rust (tracked as A0b).
+/// Windows `py` launcher). Returns the command name, or a clear message the UI
+/// surfaces verbatim. Only reached on the rare Python fallback path now that the
+/// pure-Rust parser (`bosparse`) is the default.
 fn detect_python() -> Result<String, String> {
     for cand in ["python", "python3", "py"] {
         let ok = std::process::Command::new(cand)
@@ -394,23 +396,62 @@ fn detect_python() -> Result<String, String> {
         }
     }
     Err(
-        "Python 3 is required to import .bos files but was not found on PATH. \
-         Install Python 3 from https://python.org, then run `pip install nrbf`, \
-         and restart Hyperion. (This prerequisite is removed in a later release.)"
+        "the optional Python fallback parser needs Python 3 on PATH plus \
+         `pip install nrbf`, but no interpreter was found. The pure-Rust parser \
+         normally handles .bos files; this fallback only runs if it errors."
             .to_string(),
     )
 }
 
-/// Run `bos_explore.py` on a `.bos` file, writing `out_json`, and return its nodes.
-/// `script` is the resolved parser path (resource dir in production); `work_dir`
-/// is the current dir for the child process.
+/// Parse a `.bos` file into the node array, writing `out_json`, and return its
+/// nodes.
+///
+/// The pure-Rust parser (`bosparse`) is the default — the packaged installer no
+/// longer requires Python + `pip install nrbf`. Python is now OPTIONAL: kept only
+/// as a safety-net fallback, used automatically if the Rust parser errors on some
+/// unforeseen record shape, so no user can regress.
 fn run_parser(
-    script: &Path,
-    work_dir: &Path,
+    app: &tauri::AppHandle,
+    workspace: &Path,
+    bos_path: &str,
+    out_json: &Path,
+) -> Result<Vec<Value>, String> {
+    match parse_bos_rust(bos_path, out_json) {
+        Ok(nodes) => Ok(nodes),
+        Err(rust_err) => match run_parser_python(app, workspace, bos_path, out_json) {
+            Ok(nodes) => Ok(nodes),
+            Err(py_err) => Err(format!(
+                "pure-Rust parser failed ({rust_err}); optional Python fallback \
+                 also failed ({py_err})"
+            )),
+        },
+    }
+}
+
+/// Pure-Rust `.bos` parse (default). Reads the file, parses the MS-NRBF graph,
+/// reconstructs the node tree, and persists the same JSON `out_json` the Python
+/// reference wrote (so dev-mode `bos_map.json` keeps working).
+fn parse_bos_rust(bos_path: &str, out_json: &Path) -> Result<Vec<Value>, String> {
+    let bytes = std::fs::read(bos_path).map_err(|e| format!("read .bos file: {e}"))?;
+    let nodes = bosparse::parse_bos_file(&bytes)?;
+    let text =
+        serde_json::to_string_pretty(&nodes).map_err(|e| format!("serialize parsed nodes: {e}"))?;
+    std::fs::write(out_json, text).map_err(|e| format!("write parser output: {e}"))?;
+    Ok(nodes)
+}
+
+/// Optional fallback: shell out to bos_explore.py (requires Python + `nrbf`).
+/// Only reached if the pure-Rust parser above returns an error. Resolves the
+/// bundled script from the resource dir and detects the interpreter so the
+/// fallback still works inside a packaged installer.
+fn run_parser_python(
+    app: &tauri::AppHandle,
+    workspace: &Path,
     bos_path: &str,
     out_json: &Path,
 ) -> Result<Vec<Value>, String> {
     let python = detect_python()?;
+    let script = resolve_parser_script(app, workspace);
     if !script.exists() {
         return Err(format!(
             "bundled parser not found at {} — the install may be corrupt",
@@ -418,11 +459,11 @@ fn run_parser(
         ));
     }
     let status = std::process::Command::new(&python)
-        .arg(script)
+        .arg(&script)
         .arg(bos_path)
         .arg("--json")
         .arg(out_json)
-        .current_dir(work_dir)
+        .current_dir(workspace)
         .status()
         .map_err(|e| format!("failed to launch {python}: {e}"))?;
     if !status.success() {
@@ -458,8 +499,7 @@ fn parse_bos(
         .workspace
         .clone();
     let out_json = workspace.join("bos_map.json");
-    let script = resolve_parser_script(&app, &workspace);
-    let nodes = run_parser(&script, &workspace, &path, &out_json)?;
+    let nodes = run_parser(&app, &workspace, &path, &out_json)?;
     let config_name = file_name_of(&path);
     let mut s = state.lock().unwrap_or_else(|e| e.into_inner());
     *s = build_store_from_nodes(workspace, config_name, nodes);
@@ -579,8 +619,7 @@ fn import_bos(
         .unwrap_or_else(|e| e.into_inner())
         .workspace
         .clone();
-    let script = resolve_parser_script(&app, &workspace);
-    let nodes = run_parser(&script, &workspace, &path, &out_json)?;
+    let nodes = run_parser(&app, &workspace, &path, &out_json)?;
     let fname = file_name_of(&path);
     let label = label.unwrap_or_else(|| fname.clone());
     let nodes_val = Value::Array(nodes.clone());

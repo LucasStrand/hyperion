@@ -39,8 +39,10 @@ Tauri 2 desktop app
    └─ agent.rs      runtime adapter: Claude Code | Codex | OpenRouter
 ```
 
-All secret-handling lives in the Rust core (smallest attack surface). The Python parser
-(`bos_explore.py`) and the original renderer are reused from the `bos-copilot` prototype.
+All secret-handling lives in the Rust core (smallest attack surface). The `.bos` parser is a
+pure-Rust MS-NRBF reader (`src-tauri/src/bosparse.rs`), so the packaged app needs no Python or
+`pip install nrbf`. The legacy Python parser (`bos_explore.py`) is kept only as an automatic
+fallback if the Rust parser ever hits an unforeseen record shape.
 
 ## Security model
 
@@ -56,8 +58,9 @@ All secret-handling lives in the Rust core (smallest attack surface). The Python
 ## Build & run
 
 Prerequisites: [Rust](https://rustup.rs), Node 18+, and the
-[Tauri prerequisites](https://tauri.app/start/prerequisites/) for your OS. Python 3 is used
-by the `.bos` parser.
+[Tauri prerequisites](https://tauri.app/start/prerequisites/) for your OS. The `.bos` parser
+is pure Rust, so Python is **not** required; Python 3 (with `pip install nrbf`) is optional and
+only used as an automatic fallback for the parser.
 
 ```bash
 cd hyperion
