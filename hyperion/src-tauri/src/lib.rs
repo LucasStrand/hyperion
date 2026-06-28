@@ -1823,8 +1823,61 @@ async fn agent_ask(
     }))
 }
 
+/// Parse one `KEY=VALUE` line from the optional startup env file. Returns `None` for
+/// blanks and `#` comments. The first `=` splits key/value; surrounding whitespace and
+/// one matching pair of single/double quotes are trimmed from the value. Pure and
+/// unit-tested; the file I/O lives in `load_env_file`.
+fn parse_env_line(line: &str) -> Option<(String, String)> {
+    let line = line.trim();
+    if line.is_empty() || line.starts_with('#') {
+        return None;
+    }
+    let (k, v) = line.split_once('=')?;
+    let k = k.trim();
+    if k.is_empty() {
+        return None;
+    }
+    let v = v.trim();
+    let v = if v.len() >= 2
+        && ((v.starts_with('"') && v.ends_with('"')) || (v.starts_with('\'') && v.ends_with('\'')))
+    {
+        &v[1..v.len() - 1]
+    } else {
+        v
+    };
+    Some((k.to_string(), v.to_string()))
+}
+
+/// Load `%APPDATA%\com.hyperion.iot\hyperion.env` into the process environment at
+/// startup so the INSTALLED desktop app can pick up optional API keys / feature flags
+/// (`OPENROUTER_API_KEY`, `HYPERION_FIRECRAWL_API_KEY`, `HYPERION_CRAWL_ENABLED`,
+/// `HYPERION_EMBED_*`, `HYPERION_ENTRA_*`) without those secrets ever living in the
+/// repo. A tiny dependency-free `KEY=VALUE` reader — NOT a full dotenv. A var already
+/// present in the real process environment is NEVER overwritten (real env wins). The
+/// file sits in the per-user app-config dir (outside the repo, git-ignored); the
+/// encrypted vault remains the primary store for sensitive project data.
+fn load_env_file() {
+    let Some(appdata) = std::env::var_os("APPDATA") else {
+        return;
+    };
+    let path = std::path::Path::new(&appdata)
+        .join("com.hyperion.iot")
+        .join("hyperion.env");
+    let Ok(contents) = std::fs::read_to_string(&path) else {
+        return;
+    };
+    for line in contents.lines() {
+        if let Some((k, v)) = parse_env_line(line) {
+            if std::env::var_os(&k).is_none() {
+                std::env::set_var(&k, &v);
+            }
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    load_env_file();
     let workspace = default_workspace();
     let store = build_store(workspace.clone());
     let projects_root = projects::default_root(&workspace);
@@ -1905,4 +1958,43 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod env_loader_tests {
+    use super::parse_env_line;
+
+    #[test]
+    fn parses_pairs_skips_blanks_and_comments_and_strips_quotes() {
+        assert_eq!(parse_env_line(""), None);
+        assert_eq!(parse_env_line("   "), None);
+        assert_eq!(parse_env_line("# a comment"), None);
+        assert_eq!(parse_env_line("=novalue"), None);
+        assert_eq!(
+            parse_env_line("OPENROUTER_API_KEY=sk-or-abc"),
+            Some(("OPENROUTER_API_KEY".into(), "sk-or-abc".into()))
+        );
+        // Surrounding whitespace trimmed; first `=` wins (value may contain `=`).
+        assert_eq!(
+            parse_env_line("  HYPERION_CRAWL_ENABLED = 1 "),
+            Some(("HYPERION_CRAWL_ENABLED".into(), "1".into()))
+        );
+        assert_eq!(
+            parse_env_line("K=a=b=c"),
+            Some(("K".into(), "a=b=c".into()))
+        );
+        // One matching pair of quotes is stripped; mismatched quotes are left intact.
+        assert_eq!(
+            parse_env_line(r#"K="quoted value""#),
+            Some(("K".into(), "quoted value".into()))
+        );
+        assert_eq!(
+            parse_env_line("K='quoted'"),
+            Some(("K".into(), "quoted".into()))
+        );
+        assert_eq!(
+            parse_env_line(r#"K="mismatch'"#),
+            Some(("K".into(), r#""mismatch'"#.into()))
+        );
+    }
 }

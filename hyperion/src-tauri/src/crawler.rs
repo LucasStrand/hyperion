@@ -273,12 +273,34 @@ fn crawl_enabled() -> bool {
     )
 }
 
+/// The configured Firecrawl API key, if any. Reads `HYPERION_FIRECRAWL_API_KEY`,
+/// trims surrounding whitespace, and returns `Some` only when what remains is
+/// non-empty — so an absent or blank value leaves the crawler on its direct-`GET`
+/// path (mirrors `embed.rs`'s key gate). The key is never logged or surfaced.
+fn firecrawl_key() -> Option<String> {
+    let key = std::env::var("HYPERION_FIRECRAWL_API_KEY")
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    if key.is_empty() {
+        None
+    } else {
+        Some(key)
+    }
+}
+
 /// Fetch the raw HTML at `url` over a single capped, timed `GET`. Disabled by
 /// default: without `HYPERION_CRAWL_ENABLED` set truthy this returns `Err` before
 /// touching the network (so CI/offline stays green). Only `http(s)` URLs are allowed
 /// — any other scheme is refused before egress. The response body is read under a
 /// hard cap; any HTTP/transport error text is redacted (never echoed verbatim) so a
 /// hostile page can't smuggle a credential-looking token into a surfaced error.
+///
+/// When `HYPERION_FIRECRAWL_API_KEY` is set, the fetch is first routed through the
+/// hosted Firecrawl scrape API (which returns cleaner content for JS-heavy pages); a
+/// Firecrawl failure transparently FALLS BACK to the direct `GET` below, so the key
+/// is a pure enhancement and never weakens the offline/cap/redaction guarantees. The
+/// gate (`crawl_enabled`) and scheme check apply identically to both paths.
 pub fn fetch(url: &str) -> Result<String, String> {
     if !crawl_enabled() {
         return Err(
@@ -290,6 +312,14 @@ pub fn fetch(url: &str) -> Result<String, String> {
     // read a local file or reach an unintended target.
     if !url.starts_with("https://") && !url.starts_with("http://") {
         return Err("crawler: only http:// and https:// URLs are allowed".into());
+    }
+    // Optional enhancement: when a Firecrawl key is configured, try the hosted scrape
+    // API first. On any failure (network, HTTP, parse) we silently fall through to the
+    // direct `GET` below — Firecrawl never makes a fetch fail that would otherwise work.
+    if let Some(key) = firecrawl_key() {
+        if let Ok(body) = fetch_via_firecrawl(url, &key) {
+            return Ok(body);
+        }
     }
     let resp = ureq::get(url)
         .timeout(CRAWL_TIMEOUT)
@@ -318,6 +348,99 @@ fn read_body_capped(r: ureq::Response) -> String {
     let mut buf = Vec::new();
     let _ = r.into_reader().take(MAX_CAPTURE).read_to_end(&mut buf);
     String::from_utf8_lossy(&buf).into_owned()
+}
+
+// ----------------------------- Firecrawl (optional enhancement) -----------------------------
+
+/// Firecrawl's hosted scrape endpoint — a single POST returns clean page content for
+/// JS-heavy docs/forum pages that a raw `GET` would only see as an empty shell.
+const FIRECRAWL_SCRAPE_URL: &str = "https://api.firecrawl.dev/v1/scrape";
+
+/// Build the JSON request body for a Firecrawl `/v1/scrape` call: the target `url`
+/// plus a request for the `"html"` format (which `extract_text` then strips exactly
+/// like a direct fetch). Pure and deterministic — no network, no key — so it is
+/// unit-tested in isolation from the network edge.
+#[must_use]
+pub fn build_firecrawl_request(url: &str) -> serde_json::Value {
+    serde_json::json!({
+        "url": url,
+        "formats": ["html"],
+    })
+}
+
+/// Parse a Firecrawl `/v1/scrape` JSON response and extract the page content.
+///
+/// On `{"success": true, "data": {…}}` this returns `data.html` when present and
+/// non-empty, falling back to `data.markdown` (also non-empty) — either is fine input
+/// for the caller, which strips/caches it. On `{"success": false, …}` it returns the
+/// redacted `error` field (scrubbed through `redact_secrets`, never echoed raw, so a
+/// hostile response can't smuggle a credential-looking token into a surfaced error).
+/// Malformed JSON, a missing `data`, or an empty payload all yield a short `Err`.
+/// Pure and offline — unit-tested with synthetic JSON.
+pub fn parse_firecrawl_response(body: &str) -> Result<String, String> {
+    let v: serde_json::Value = serde_json::from_str(body)
+        .map_err(|e| format!("firecrawl: malformed JSON response: {e}"))?;
+
+    // An explicit `success: false` carries the host's own (redacted) error text.
+    if v.get("success").and_then(serde_json::Value::as_bool) == Some(false) {
+        let detail = v
+            .get("error")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
+        return Err(format!(
+            "firecrawl error: {}",
+            tail_chars(&redact_secrets(detail), 400)
+        ));
+    }
+
+    let data = v
+        .get("data")
+        .ok_or_else(|| "firecrawl: response missing `data`".to_string())?;
+
+    // Prefer cleaned HTML; fall back to markdown. A present-but-empty field counts as
+    // absent so we never hand the caller a blank page as if it were content.
+    for field in ["html", "markdown"] {
+        if let Some(s) = data.get(field).and_then(serde_json::Value::as_str) {
+            if !s.trim().is_empty() {
+                return Ok(s.to_string());
+            }
+        }
+    }
+    Err("firecrawl: response contained no html or markdown content".into())
+}
+
+/// Fetch `url` through Firecrawl: POST `build_firecrawl_request(url)` to the scrape
+/// endpoint with `Authorization: Bearer <key>`, the shared `CRAWL_TIMEOUT`, read the
+/// body under the same `MAX_CAPTURE` cap as the direct path, and hand it to
+/// `parse_firecrawl_response`. All HTTP/transport error text is redacted via
+/// `redact_secrets` + `tail_chars` exactly like `fetch`; the key itself is never
+/// echoed. Returns the extracted page content (HTML or markdown) on success.
+fn fetch_via_firecrawl(url: &str, key: &str) -> Result<String, String> {
+    // Serialize the (pure) request body ourselves and send it as a raw JSON string so
+    // we don't depend on ureq's optional `json` feature — `send_string` is always
+    // available and the explicit Content-Type keeps Firecrawl happy.
+    let body = build_firecrawl_request(url).to_string();
+    let resp = ureq::post(FIRECRAWL_SCRAPE_URL)
+        .timeout(CRAWL_TIMEOUT)
+        .set("User-Agent", USER_AGENT)
+        .set("Content-Type", "application/json")
+        .set("Authorization", &format!("Bearer {key}"))
+        .send_string(&body);
+    match resp {
+        Ok(r) => parse_firecrawl_response(&read_body_capped(r)),
+        // Surface the host's own error text (redacted, never raw) so the caller can act.
+        Err(ureq::Error::Status(code, r)) => {
+            let detail = read_body_capped(r);
+            Err(format!(
+                "firecrawl HTTP {code}: {}",
+                tail_chars(&redact_secrets(&detail), 400)
+            ))
+        }
+        Err(e) => Err(format!(
+            "firecrawl request failed: {}",
+            redact_secrets(&e.to_string())
+        )),
+    }
 }
 
 #[cfg(test)]
@@ -446,6 +569,68 @@ mod tests {
         match prev {
             Some(p) => std::env::set_var("HYPERION_CRAWL_ENABLED", p),
             None => std::env::remove_var("HYPERION_CRAWL_ENABLED"),
+        }
+    }
+
+    #[test]
+    fn build_firecrawl_request_is_pure_scrape_body() {
+        let v = build_firecrawl_request("https://docs.example.com/page");
+        assert_eq!(v["url"], "https://docs.example.com/page");
+        assert_eq!(v["formats"], serde_json::json!(["html"]));
+    }
+
+    #[test]
+    fn parse_firecrawl_response_prefers_html() {
+        let body =
+            r##"{"success":true,"data":{"html":"<h1>Hi</h1>","markdown":"# Hi","metadata":{}}}"##;
+        assert_eq!(parse_firecrawl_response(body).unwrap(), "<h1>Hi</h1>");
+    }
+
+    #[test]
+    fn parse_firecrawl_response_falls_back_to_markdown() {
+        // Empty/absent html must fall through to non-empty markdown.
+        let body = r##"{"success":true,"data":{"html":"   ","markdown":"# Heading"}}"##;
+        assert_eq!(parse_firecrawl_response(body).unwrap(), "# Heading");
+        let body2 = r##"{"success":true,"data":{"markdown":"# Only"}}"##;
+        assert_eq!(parse_firecrawl_response(body2).unwrap(), "# Only");
+    }
+
+    #[test]
+    fn parse_firecrawl_response_reports_failure_error_field() {
+        let body = r#"{"success":false,"error":"rate limit exceeded"}"#;
+        let err = parse_firecrawl_response(body).unwrap_err();
+        assert!(err.contains("firecrawl error"), "got: {err}");
+        assert!(err.contains("rate limit exceeded"), "got: {err}");
+    }
+
+    #[test]
+    fn parse_firecrawl_response_errors_on_empty_and_malformed() {
+        // Success but no usable content.
+        let empty = r#"{"success":true,"data":{"html":"","markdown":""}}"#;
+        assert!(parse_firecrawl_response(empty).is_err());
+        // Missing data object.
+        assert!(parse_firecrawl_response(r#"{"success":true}"#).is_err());
+        // Not even JSON.
+        assert!(parse_firecrawl_response("<not json>").is_err());
+    }
+
+    #[test]
+    fn firecrawl_key_trims_and_gates_on_blank() {
+        let _env = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let prev = std::env::var("HYPERION_FIRECRAWL_API_KEY").ok();
+
+        std::env::remove_var("HYPERION_FIRECRAWL_API_KEY");
+        assert_eq!(firecrawl_key(), None);
+
+        std::env::set_var("HYPERION_FIRECRAWL_API_KEY", "   ");
+        assert_eq!(firecrawl_key(), None);
+
+        std::env::set_var("HYPERION_FIRECRAWL_API_KEY", "  fc-secret  ");
+        assert_eq!(firecrawl_key(), Some("fc-secret".to_string()));
+
+        match prev {
+            Some(p) => std::env::set_var("HYPERION_FIRECRAWL_API_KEY", p),
+            None => std::env::remove_var("HYPERION_FIRECRAWL_API_KEY"),
         }
     }
 
